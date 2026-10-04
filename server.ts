@@ -1126,7 +1126,7 @@ ${evidence ? `مدرک پیوست‌شده توسط قاضی که کل دادگ�
    - اگر قاضی اسم را با غلط املایی یا خلاصه گفت، کاراکتر با لحنی طبیعی و مودبانه/رندانه به تصحیح اسم اشاره کند (مثلاً «جناب قاضی، اگر با بنده (سهراب) هستید...»).
 
 ۵. **مداخله و قطع کلام خودکار (interruption)**:
-   - فقط در ۲۰٪ مواقع بسیار حساس یا هنگام تنش بالا شیء interruption را پر کنید؛ در غیر این صورت مقدار آن را null بگذارید.
+   - بسیار نادر (کمتر از ۵٪ مواقع و فقط در صورت درگیری لفظی حاد و مستقیم شخصی، در غیر این صورت حتماً مقدار آن را null بگذارید).
 
 خروجی صرفاً یک JSON معتبر فارسی باشد با ساختار زیر (بدون هیچ متن اضافی):
 {
@@ -1134,16 +1134,10 @@ ${evidence ? `مدرک پیوست‌شده توسط قاضی که کل دادگ�
   "addressedCharacterName": "نام دقیق کاراکتر پاسخ‌دهنده",
   "speech": "پاسخ رسا، هوشمندانه، مستدل و واقع‌گرایانه کاراکتر پاسخ‌دهنده (یا دیالوگ اعتراف در صورت فروپاشی)",
   "innerThought": "مونولوگ درونی، محاسبه‌گری یا استرس پنهان کاراکتر در مغز خود",
-  "slipUp": "فقط در صورتی که قاضی با مدرک قطعی او را گیر انداخت تناقض ریز را بنویسید، در غیر این صورت null",
+  "slipUp": null,
   "isConfession": false,
-  "stressDelta": 10,
   "lawyerIntervention": "متن اعتراض حقوقی در صورت لزوم، در غیر این صورت null",
-  "interruption": {
-    "interrupterId": "آیدی کاراکتر معترض",
-    "interrupterName": "نام کاراکتر معترض",
-    "interrupterText": "دیالوگ تند و مرتبط با همین پرونده",
-    "replyText": "پاسخ تند متقابل کاراکتر پاسخ‌دهنده اصلی"
-  }
+  "interruption": null
 }`;
 
       const resAi = await generateAiContent(prompt, true, 0.85, 2000);
@@ -1343,29 +1337,60 @@ ${evidence ? `مدرک پیوست‌شده توسط قاضی که کل دادگ�
     }
   });
 
-  // Verdict Evaluation API
+  // Verdict Evaluation API with Multi-Character Typed Judgments
   app.post('/api/judge-verdict', async (req: Request, res: Response) => {
-    const { caseData, accusedId, verdictType, verdictReasoning, penalty, chargeName } = req.body;
+    const { caseData, accusedId, verdictType, verdictReasoning, penalty, chargeName, individualDecisions } = req.body;
 
     const chosenPerson = (caseData?.characters || []).find((c: Character) => c.id === accusedId);
     const realCulpritId = caseData?.hiddenTruth?.realCulpritId;
     const isDirectMatch = accusedId === realCulpritId;
     const isRealCase = Boolean(caseData?.realWorldInfo?.isRealCase);
 
+    const individualDecisionsList = Array.isArray(individualDecisions) && individualDecisions.length > 0
+      ? individualDecisions
+      : (caseData?.characters || []).map((c: Character) => ({
+          characterId: c.id,
+          characterName: c.name,
+          status: c.id === accusedId ? verdictType : 'acquitted',
+          chargeAndPenalty: c.id === accusedId ? `${chargeName || ''} - ${penalty || ''}` : 'تبرئه',
+        }));
+
+    // Check if the real culprit was marked guilty in individual decisions
+    const realCulpritFound = individualDecisionsList.some(
+      (d: any) => d.characterId === realCulpritId && d.status === 'guilty'
+    ) || (isDirectMatch && verdictType === 'guilty');
+
     if (!ai) {
-      const isCorrect = isDirectMatch && verdictType === 'guilty';
+      const isCorrect = realCulpritFound;
+      const individualEvaluations = (caseData?.characters || []).map((c: Character) => {
+        const userDec = individualDecisionsList.find((d: any) => d.characterId === c.id);
+        const isCulprit = c.id === realCulpritId;
+        const markedGuilty = userDec?.status === 'guilty';
+        const isRight = (isCulprit && markedGuilty) || (!isCulprit && !markedGuilty);
+        return {
+          characterId: c.id,
+          characterName: c.name,
+          statusSummary: markedGuilty ? 'محکوم به مجازات' : 'تبرئه / مختومه',
+          isCorrectVerdict: isRight,
+          note: isRight
+            ? (isCulprit ? 'احراز دقیق مجرمیت مقصر واقعی' : 'برائت شایسته فرد بی‌گناه')
+            : (isCulprit ? 'عدم انتساب جرم به مقصر واقعی' : 'محکومیت اشتباه فرد بی‌گناه'),
+        };
+      });
+
       return res.json({
         isCorrect,
-        justiceRating: isCorrect ? 94 : 35,
+        justiceRating: isCorrect ? 95 : 35,
         truthRevealed: caseData?.hiddenTruth?.howCrimeHappened || 'پرونده مختومه شد.',
         feedback: isCorrect
-          ? 'آفرین جناب قاضی! شما موفق شدید مجرم واقعی را شناسایی و تناقض مدارک را برملا کنید.'
-          : 'حکم صادره متاسفانه با حقیقت ماجرا مغایرت داشت و فرد بی‌گناه مجازات گردید.',
+          ? 'آفرین جناب قاضی! شما موفق شدید مجرم واقعی را در میان اشخاص شناسایی کرده و به درستی دادنامه را انشا نمایید.'
+          : 'حکم صادره متاسفانه با حقیقت ماجرا مغایرت داشت و مقصر واقعی تبرئه گردید یا فرد بی‌گناهی مجازات شد.',
         deceptionBusted: isCorrect,
-        epilogue: 'پرونده با صدور دادنامه به اجرای احکام دادگستری ارسال شد.',
-        culpritConfession: isCorrect ? 'اعتراف می‌کنم... فکر نمی‌کردم متوجه آن تناقض شوید!' : undefined,
-        chargeName: chargeName || 'اتهام انتسابی',
-        penaltyApplied: penalty || 'مجازات قانونی',
+        epilogue: 'پرونده با صدور دادنامه تایپی جامع به اجرای احکام دادگستری ارسال شد.',
+        culpritConfession: isCorrect ? 'اعتراف می‌کنم... استدلال و مدارکی که در دادنامه قید کردید راه فراری برایم نگذاشت!' : undefined,
+        chargeName: chargeName || 'احراز مجرمیت جامع',
+        penaltyApplied: penalty || 'مجازات بر اساس احکام تعیینی دادنامه',
+        individualEvaluations,
         ...(isRealCase && caseData.realWorldInfo
           ? {
               historicalComparison: {
@@ -1382,47 +1407,58 @@ ${evidence ? `مدرک پیوست‌شده توسط قاضی که کل دادگ�
     }
 
     try {
+      const charsSummary = individualDecisionsList
+        .map((d: any) => `• نام شخص: "${d.characterName}" (آیدی: ${d.characterId}) -> وضعیت تعیین‌شده توسط قاضی: [${d.status}] | حکم/دستور تایپ‌شده: "${d.chargeAndPenalty || 'بدون متن'}"`)
+        .join('\n');
+
       const evaluationPrompt = `شما هیئت عالی نظارت قضایی بر احکام دادگاه در بازی «آقای قاضی» هستید.
 پرونده: ${caseData.title}
 شرح واقعه: ${caseData.briefing}
-حقیقت پنهان واقعی:
-مجرم اصلی: ${caseData.hiddenTruth?.realCulpritName || 'مشخص شده در پرونده'} (آیدی: ${realCulpritId})
+
+حقیقت پنهان واقعی پرونده:
+مجرم اصلی واقعی: ${caseData.hiddenTruth?.realCulpritName || 'مشخص شده در پرونده'} (آیدی: ${realCulpritId})
 انگیزه واقعی: ${caseData.hiddenTruth?.motive || ''}
-نحوه وقوع: ${caseData.hiddenTruth?.howCrimeHappened || ''}
+نحوه وقوع جرم: ${caseData.hiddenTruth?.howCrimeHappened || ''}
 تناقض کلیدی: ${caseData.hiddenTruth?.keyContradiction || ''}
 
-${isRealCase && caseData.realWorldInfo ? `اطلاعات پرونده واقعی در دنیای واقعی:
+${isRealCase && caseData.realWorldInfo ? `اطلاعات پرونده واقعی در تاریخ:
 نام واقعی پرونده: ${caseData.realWorldInfo.realCaseName}
 رأی قطعی دادگاه واقعی در تاریخ: ${caseData.realWorldInfo.actualCourtVerdict}
 مجازات واقعی در تاریخ: ${caseData.realWorldInfo.actualSentence}
 سرنوشت واقعی: ${caseData.realWorldInfo.historicalEpilogue}` : ''}
 
-حکم صادره توسط قاضی (بازیکن):
-شخص انتخاب شده: ${chosenPerson?.name || 'نامشخص'} (آیدی: ${accusedId})
-نوع حکم: ${verdictType} (مثلاً guilty به معنای محکوم، acquitted به معنای تبرئه)
-عنوان اتهام انتسابی تایپ‌شده توسط قاضی: "${chargeName || 'تعیین نشده'}"
-میزان و نوع مجازات تایپ‌شده توسط قاضی: "${penalty || 'تعیین نشده'}"
-استدلال قضایی مکتوب قاضی: "${verdictReasoning}"
+تصمیمات و احکام تایپی قاضی (کاربر) برای تک‌تک اشخاص پرونده:
+${charsSummary}
+
+متن انشای کامل دادنامه و استدلال قضایی تایپ‌شده توسط قاضی:
+"${verdictReasoning}"
 
 وظیفه خطیر شما برای ارزیابی جامع دادنامه:
-۱. ارزیابی تشخیص مجرم: آیا قاضی درست تشخیص داده و مجرم واقعی را محکوم کرده است یا فرد بی‌گناه را؟
-۲. **ارزیابی عنوان اتهام تایپ‌شده**: بررسی کنید آیا عنوان اتهام انتسابی که قاضی تایپ کرده (مثلاً قتل، کلاهبرداری، سرقت، خیانت در امانت و...) با ماهیت واقعی این جرم تناسب حقوقی دقیق دارد یا خیر؟
-۳. **ارزیابی تناسب مجازات تایپ‌شده**: آیا مجازات تعیین‌شده متناسب با جرم و قوانین است؟
-۴. ارزیابی استدلال قضایی: آیا قاضی به مدارک محوری و تناقض اصلی استناد کرده است؟
-۵. نمره عدالت (justiceRating بین ۰ تا ۱۰۰) بدهید.
-${isRealCase ? `۶. **تحلیل مقایسه‌ای با دنیای واقعی (historicalComparison)**: حتماً بخش مقایسه تاریخی را پر کنید و بنویسید که حکم صادر شده توسط کاربر، چند درصد (divergencePercentage) با رأی قطعی دادگاه در واقعیت تاریخ تطابق یا تفاوت داشته و چرا دادگاه واقعی آن تصمیم را گرفت.` : ''}
+۱. ارزیابی تشخیص مجرم: آیا قاضی درست تشخیص داده و مجرم واقعی (${realCulpritId}) را در میان اشخاص محکوم کرده و افراد بی‌گناه را تبرئه نموده است؟
+۲. **ارزیابی دادنامه تایپی و استدلال قاضی**: استدلال مکتوب قاضی، اشاره به مدارک کلیدی و تناسب مجازات‌های تایپ‌شده برای هر شخص را ارزیابی فرمایید.
+۳. برای تک‌تک کاراکترها در آرایه "individualEvaluations" ارزیابی کنید که آیا تصمیم قاضی برای آن شخص درست بوده است یا خیر همراه با یک توضیح حقوقی کوتاه.
+۴. نمره عدالت (justiceRating بین ۰ تا ۱۰۰) بدهید.
+${isRealCase ? `۵. **تحلیل مقایسه‌ای با دنیای واقعی (historicalComparison)**: حتماً بخش مقایسه تاریخی را پر کنید و بنویسید که حکم صادر شده توسط کاربر، چند درصد (divergencePercentage) با رأی قطعی دادگاه در واقعیت تاریخ تطابق یا تفاوت داشته و چرا دادگاه واقعی آن تصمیم را گرفت.` : ''}
 
 خروجی صرفاً یک JSON معتبر باشد با فرمت:
 {
   "isCorrect": true/false,
   "justiceRating": 95,
   "truthRevealed": "شرح کامل و جذاب حقیقت واقعی پشت پرده جنایت",
-  "feedback": "تحلیل تخصصی عملکرد قاضی: ارزیابی درستی عنوان اتهام تایپ‌شده، تناسب مجازات انتخابی و شواهد مورد استناد",
+  "feedback": "تحلیل تخصصی و فاخر عملکرد قاضی: ارزیابی درستی تشخیص مجرم در بین اشخاص، دادنامه مکتوب تایپ‌شده و شواهد مورد استناد",
   "deceptionBusted": true/false,
-  "epilogue": "سرنوشت پرونده، متهم و شاکی پس از اجرای این حکم",
-  "culpritConfession": "جملات اعتراف یا واکنش نهایی مقصر در لحظه اعلام حکم",
-  "chargeName": "${chargeName || ''}",
-  "penaltyApplied": "${penalty || ''}"${isRealCase ? `,
+  "epilogue": "سرنوشت پرونده، متهم و شاکی پس از اجرای این حکم جامع",
+  "culpritConfession": "جملات اعتراف یا واکنش نهایی مقصر اصلی در لحظه ابلاغ دادنامه",
+  "chargeName": "${chargeName || 'احراز مجرمیت بر اساس دادنامه تایپی'}",
+  "penaltyApplied": "${penalty || 'مجازات تعیینی دادگاه'}",
+  "individualEvaluations": [
+    {
+      "characterName": "نام شخص",
+      "statusSummary": "خلاصه تصمیم قاضی",
+      "isCorrectVerdict": true/false,
+      "note": "توضیح کوتاه ارزیابی دیوان عالی درباره تصمیم قاضی برای این شخص"
+    }
+  ]${isRealCase ? `,
   "historicalComparison": {
     "actualCourtVerdict": "خلاصه رأی دادگاه تاریخی در واقعیت",
     "actualSentence": "مجازات واقعی در تاریخ",
@@ -1433,7 +1469,7 @@ ${isRealCase ? `۶. **تحلیل مقایسه‌ای با دنیای واقعی 
   }` : ''}
 }`;
 
-      const resAi = await generateAiContent(evaluationPrompt, true, 0.7, 1200, MODEL_TIER_FAST_LITE);
+      const resAi = await generateAiContent(evaluationPrompt, true, 0.7, 1800, MODEL_TIER_FAST_LITE);
       const parsed = parseJsonFromAi<Record<string, unknown>>(resAi.text);
       res.json({
         ...parsed,
@@ -1442,15 +1478,15 @@ ${isRealCase ? `۶. **تحلیل مقایسه‌ای با دنیای واقعی 
       });
     } catch (error) {
       console.error('Error evaluating verdict:', error);
-      const isCorrect = isDirectMatch && verdictType === 'guilty';
+      const isCorrect = realCulpritFound;
       res.json({
         isCorrect,
-        justiceRating: isCorrect ? 90 : 40,
+        justiceRating: isCorrect ? 92 : 40,
         truthRevealed: caseData?.hiddenTruth?.howCrimeHappened || 'پرونده بررسی شد.',
         feedback: isCorrect ? 'رأی منطبق بر حقیقت و مدارک موجود اصدار یافت.' : 'حکم صادره با واقعیت مادی پرونده همخوانی نداشت.',
         deceptionBusted: isCorrect,
         epilogue: 'پرونده به اجرای احکام دادسرا ارجاع شد.',
-        chargeName: chargeName || 'اتهام انتسابی',
+        chargeName: chargeName || 'احراز مجرمیت',
         penaltyApplied: penalty || 'مجازات قانونی',
         ...(isRealCase && caseData.realWorldInfo
           ? {

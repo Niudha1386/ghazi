@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PRESET_CASES } from './data/presets.ts';
-import { CaseDossier, EvidenceItem, InterrogationMessage, VerdictResult } from './types.ts';
+import { CaseDossier, EvidenceItem, InterrogationMessage, VerdictResult, IndividualCharacterVerdict } from './types.ts';
 import { soundManager } from './utils/audio.ts';
 import { Navbar } from './components/Navbar.tsx';
 import { CaseDossierView } from './components/CaseDossierView.tsx';
@@ -267,7 +267,7 @@ export default function App() {
       const responderId = data.addressedCharacterId || activeCharacterId || caseData.characters[0].id;
       const responderChar = caseData.characters.find((c) => c.id === responderId) || caseData.characters[0];
 
-      // Update active focused character to the one responding so their face, stress level, and card are highlighted
+      // Update active focused character to the one responding
       setActiveCharacterId(responderId);
 
       // Check lawyer intervention
@@ -284,23 +284,8 @@ export default function App() {
         setCourtroomMessages((prev) => [...prev, lawyerMsg]);
       }
 
-      // Update stress for the responding character
-      if (data.stressDelta) {
-        setCharacterStressMap((prev) => {
-          const oldVal = prev[responderId] ?? responderChar.suspicionLevel;
-          const newVal = Math.min(100, Math.max(0, oldVal + data.stressDelta));
-          if (newVal > 75) {
-            soundManager.playHeartbeat();
-          }
-          return { ...prev, [responderId]: newVal };
-        });
-      }
-
-      // If confession or slip-up detected, play dramatic chord and boost stress
+      // If genuine formal confession detected, play dramatic chord
       if (data.isConfession) {
-        soundManager.playDramaticSting();
-        setCharacterStressMap((prev) => ({ ...prev, [responderId]: 100 }));
-      } else if (data.slipUp) {
         soundManager.playDramaticSting();
       }
 
@@ -311,16 +296,17 @@ export default function App() {
         characterId: responderChar.id,
         text: data.speech || 'جناب قاضی، پاسخ دیگری برای این ادعا ندارم.',
         innerThought: data.innerThought,
-        slipUp: data.slipUp,
         isConfession: !!data.isConfession,
         timestamp: new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }),
       };
 
       setCourtroomMessages((prev) => [...prev, characterReplyMsg]);
 
-      // If Gemini returned an organic autonomous interruption:
-      if (data.interruption) {
-        // Trigger a dramatic sequence with comfortable 3-3.5s reading pauses
+      // Smart RARE interruption mechanism: only triggers with low probability and not on every question
+      const shouldTriggerInterruption = Boolean(data.interruption) && (courtroomMessages.length % 5 === 0) && (Math.random() < 0.4);
+
+      if (shouldTriggerInterruption && data.interruption) {
+        // Trigger an occasional rare dramatic sequence with comfortable pauses
         const tid1 = window.setTimeout(() => {
           soundManager.playObjection();
           const disputeMsg1: InterrogationMessage = {
@@ -345,7 +331,7 @@ export default function App() {
             };
             setCourtroomMessages((prev) => [...prev, disputeMsg2]);
 
-            // End dispute state cleanly after the two dynamic in-character AI dialogue exchanges
+            // End dispute state cleanly
             setIsDisputeActive(false);
           }, 3500);
           setDisputeTimeoutIds((prev) => [...prev, tid2]);
@@ -366,7 +352,8 @@ export default function App() {
     verdictType: string,
     reasoning: string,
     penalty: string,
-    chargeName?: string
+    chargeName?: string,
+    individualDecisions?: IndividualCharacterVerdict[]
   ): Promise<VerdictResult | null> => {
     if (!caseData) return null;
     try {
@@ -380,6 +367,7 @@ export default function App() {
           verdictReasoning: reasoning,
           penalty,
           chargeName,
+          individualDecisions,
         }),
       });
 

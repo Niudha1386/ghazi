@@ -58,7 +58,6 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const activeChar = caseData.characters.find((c) => c.id === activeCharacterId) || caseData.characters[0];
-  const currentStress = characterStressMap[activeChar.id] ?? activeChar.suspicionLevel;
 
   // Auto-scroll chat to bottom strictly within the container, leaving the main window scroll untouched
   useEffect(() => {
@@ -256,22 +255,10 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
                 </div>
               </div>
 
-              {/* Stress & Nervous Tremor Meter for current testifying person */}
-              <div className="flex items-center gap-1.5 sm:gap-2 bg-[#181a28] px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl border border-stone-800 shadow-sm shrink-0">
-                <Activity className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${currentStress > 70 ? 'text-red-500 animate-bounce' : 'text-amber-400'}`} />
-                <div className="text-right">
-                  <span className="text-[9px] sm:text-[10px] text-stone-400 block font-medium">نبض و اضطراب بیان:</span>
-                  <div className="flex items-center gap-1">
-                    <div className="w-14 sm:w-20 h-1.5 sm:h-2 bg-stone-800 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all duration-500 ${
-                          currentStress > 75 ? 'bg-red-500' : currentStress > 45 ? 'bg-amber-500' : 'bg-emerald-500'
-                        }`}
-                        style={{ width: `${Math.min(100, Math.max(10, currentStress))}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
+              {/* Status Badge for current testifying person */}
+              <div className="flex items-center gap-1.5 sm:gap-2 bg-[#181a28] px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-stone-800 shadow-sm shrink-0">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-[10px] sm:text-xs text-amber-200/90 font-medium">مستقر در جایگاه استنطاق</span>
               </div>
             </div>
 
@@ -353,14 +340,6 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
                         <div className="mt-2.5 p-2.5 rounded-xl bg-gradient-to-r from-red-950 via-[#310c14] to-red-950 border-2 border-red-500 text-red-200 text-[11px] sm:text-xs font-bold flex items-center gap-2 shadow-lg animate-pulse">
                           <Flame className="w-4 h-4 text-red-400 shrink-0 animate-bounce" />
                           <span>🚨 فروپاشی روانی و اعتراف صریح در برابر شواهد قاطع دادگاه!</span>
-                        </div>
-                      )}
-
-                      {/* Slip-up reveal */}
-                      {msg.slipUp && !msg.isConfession && (
-                        <div className="mt-2 p-2 rounded-xl bg-red-950/50 border border-red-500/50 text-red-300 text-[11px] sm:text-xs font-semibold flex items-center gap-1.5 shadow-inner">
-                          <AlertOctagon className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                          <span>تناقض و لغزش کلامی: {msg.slipUp}</span>
                         </div>
                       )}
                     </div>

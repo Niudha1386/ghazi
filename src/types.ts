@@ -117,6 +117,13 @@ export interface InterrogationMessage {
   isConfession?: boolean;
 }
 
+export interface IndividualCharacterVerdict {
+  characterId: string;
+  characterName: string;
+  status: 'guilty' | 'acquitted' | 'witness_cleared' | 'investigate_further';
+  chargeAndPenalty: string;
+}
+
 export interface VerdictResult {
   isCorrect: boolean;
   justiceRating: number; // 0 to 100
@@ -127,6 +134,13 @@ export interface VerdictResult {
   culpritConfession?: string;
   chargeName?: string;
   penaltyApplied?: string;
+  individualEvaluations?: Array<{
+    characterId?: string;
+    characterName: string;
+    statusSummary: string;
+    isCorrectVerdict: boolean;
+    note: string;
+  }>;
   historicalComparison?: HistoricalComparison;
 }
 
