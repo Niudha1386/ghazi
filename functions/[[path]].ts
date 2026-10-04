@@ -1,12 +1,12 @@
 /**
- * Cloudflare Worker / Edge Runtime Entrypoint
- * Provides zero-configuration serverless execution for Mr. Judge on Cloudflare Workers & Cloudflare Pages.
+ * Cloudflare Pages Functions entrypoint
+ * Route handler for all /api/* endpoints on Cloudflare Pages.
  */
 
-import { PRESET_CASES } from './src/data/presets.ts';
-import { CaseDossier, Character, EvidenceItem } from './src/types.ts';
+import { PRESET_CASES } from '../../src/data/presets.ts';
+import { CaseDossier, Character, EvidenceItem } from '../../src/types.ts';
 
-export interface Env {
+export interface EventContextEnv {
   GEMINI_API_KEY?: string;
   MY_GEMINI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
@@ -59,7 +59,7 @@ function parseJsonFromAi<T>(rawText: string): T {
   return JSON.parse(cleaned) as T;
 }
 
-function extractApiKey(request: Request, env?: Env): string {
+function extractApiKey(request: Request, env?: EventContextEnv): string {
   try {
     const url = new URL(request.url);
     const queryKey = url.searchParams.get('apiKey') || url.searchParams.get('key');
@@ -94,7 +94,7 @@ function extractApiKey(request: Request, env?: Env): string {
   return '';
 }
 
-function extractCustomBaseUrl(env?: Env): string {
+function extractCustomBaseUrl(env?: EventContextEnv): string {
   if (env) {
     if (env.GEMINI_BASE_URL) return env.GEMINI_BASE_URL.trim();
     if (env.GOOGLE_GENAI_BASE_URL) return env.GOOGLE_GENAI_BASE_URL.trim();
@@ -123,7 +123,7 @@ function generateProceduralCase(topic: string): CaseDossier {
     victimBackground: `شخص ذینفع و شاکی اصلی پرونده که تقاضای ممیزی رسمی و پیگرد قانونی موضوع «${cleanTopic}» را دارد.`,
     briefing: `گزارش بازرسی شعبه ویژه دادگاه: تحقیقات اولیه پیرامون موضوع «${cleanTopic}» حاکی از وجود تخلفات جدی و اسناد متناقض مالی و اداری است. اشخاص مرتبط هر کدام ادعاهای متناقضی را در محضر دادگاه مطرح نموده‌اند که نیازمند بازجویی و مداقه جنایی قاضی است.`,
     autopsyReport: {
-      timeOfDeath: 'ساعت ۲۰:۳۰ الی ۲۰:۰۰ شب',
+      timeOfDeath: 'ساعت ۲۰:۳۰ الی ۲۱:۰۰ شب',
       causeOfDeath: `ریشه اختلاف پیرامون موضوع: ${cleanTopic}`,
       toxicology: 'مثبت - وجود تخلف ساختاری و جعل اسناد اداری',
       injuries: ['فاکتورهای مالی مورد مناقشه', 'اسناد پلاک ثبتی یا شهادت شهود'],
@@ -297,148 +297,148 @@ async function generateWorkerRestAi(
   throw new Error(`All Gemini candidate models failed. Details: ${lastErrorMsg}`);
 }
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+export async function onRequest(context: { request: Request; env: EventContextEnv }): Promise<Response> {
+  const { request, env } = context;
+  const url = new URL(request.url);
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
 
-    const apiKey = extractApiKey(request, env);
-    const customBaseUrl = extractCustomBaseUrl(env);
+  const apiKey = extractApiKey(request, env);
+  const customBaseUrl = extractCustomBaseUrl(env);
 
-    // 1. Preset Cases
-    if (url.pathname === '/api/preset-cases') {
-      return jsonResponse(PRESET_CASES);
-    }
+  // 1. Preset Cases
+  if (url.pathname === '/api/preset-cases') {
+    return jsonResponse(PRESET_CASES);
+  }
 
-    // 2. System Logs
-    if (url.pathname === '/api/system-logs') {
-      return jsonResponse([
-        {
-          id: 'log-worker-init',
-          timestamp: new Date().toISOString(),
-          type: apiKey ? 'success' : 'warn',
-          module: 'CloudflareWorker',
-          message: apiKey
-            ? `سرویس ورکر کلودفلر با کلید API فعال است. (${apiKey.substring(0, 6)}...)`
-            : 'سرویس ورکر در حالت شبیه‌ساز آفلاین است (کلید API یافت نشد).',
-        },
-      ]);
-    }
-
-    // 3. Models Info
-    if (url.pathname === '/api/models-info') {
-      return jsonResponse({
-        primaryModel: env?.PRIMARY_MODEL || PRIMARY_MODEL,
-        models: MODEL_TIER_MAIN,
-        hasApiKey: !!apiKey,
-      });
-    }
-
-    // 4. Bridge Status
-    if (url.pathname === '/api/bridge-status') {
-      return jsonResponse({
-        active: !!apiKey,
-        bridge: 'Cloudflare Pages & Worker Edge Runtime',
-        model: env?.PRIMARY_MODEL || PRIMARY_MODEL,
-        noVpnNeeded: true,
-        message: apiKey
-          ? 'پل ارتباطی جمینای در سرور ورکر فعال و آماده است.'
-          : 'کلید GEMINI_API_KEY در متغیرهای ورکر یافت نشد. حالت آفلاین فعال است.',
-      });
-    }
-
-    // 5. Ping & Test Model
-    if ((url.pathname === '/api/ping-model' || url.pathname === '/api/test-gemini-model') && request.method === 'POST') {
-      const body: any = await request.json().catch(() => ({}));
-      const targetModel = body.modelName || env?.PRIMARY_MODEL || PRIMARY_MODEL;
-
-      if (!apiKey) {
-        return jsonResponse({
-          success: false,
-          modelName: targetModel,
-          latencyMs: 0,
-          error: 'کلید GEMINI_API_KEY در متغیرهای ورکر تنظیم نشده است.',
-        });
-      }
-
-      const startTime = Date.now();
-      try {
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          'سلام. فقط کلمه "وصل" را برگردان.',
-          false,
-          0.1,
-          10,
-          [targetModel, ...MODEL_TIER_MAIN],
-          customBaseUrl
-        );
-        const latencyMs = Date.now() - startTime;
-        return jsonResponse({
-          success: true,
-          modelName: resAi.usedModel,
-          latencyMs,
-          responseText: resAi.text.trim(),
-        });
-      } catch (err: any) {
-        return jsonResponse({
-          success: false,
-          modelName: targetModel,
-          latencyMs: Date.now() - startTime,
-          error: `خطا در پینگ ورکر: ${err?.message || err}`,
-        });
-      }
-    }
-
-    // 6. Diagnose Gemini
-    if (url.pathname === '/api/diagnose-gemini' && request.method === 'POST') {
-      const report: any = {
+  // 2. System Logs
+  if (url.pathname === '/api/system-logs') {
+    return jsonResponse([
+      {
+        id: 'log-worker-init',
         timestamp: new Date().toISOString(),
-        apiKeyConfigured: !!apiKey,
-        apiKeyMasked: apiKey ? apiKey.substring(0, 6) + '...' + apiKey.substring(apiKey.length - 4) : 'یافت نشد',
-        customBaseUrl: customBaseUrl || 'پیش‌فرض (Google API)',
-        dnsTest: 'موفق (اتصال Edge)',
-        geminiPing: 'کامل نشده',
-        errors: [],
-      };
+        type: apiKey ? 'success' : 'warn',
+        module: 'CloudflarePages',
+        message: apiKey
+          ? `سرویس ورکر پیجزم با کلید API فعال است. (${apiKey.substring(0, 6)}...)`
+          : 'سرویس ورکر در حالت شبیه‌ساز آفلاین است (کلید API یافت نشد).',
+      },
+    ]);
+  }
 
-      if (!apiKey) {
-        report.geminiPing = 'کلید API تنظیم نشده است';
-        return jsonResponse({ success: false, report });
-      }
+  // 3. Models Info
+  if (url.pathname === '/api/models-info') {
+    return jsonResponse({
+      primaryModel: env?.PRIMARY_MODEL || PRIMARY_MODEL,
+      models: MODEL_TIER_MAIN,
+      hasApiKey: !!apiKey,
+    });
+  }
 
-      try {
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          'سلام. فقط کلمه "موفق" را برگردان.',
-          false,
-          0.1,
-          10,
-          MODEL_TIER_MAIN,
-          customBaseUrl
-        );
-        report.geminiPing = `موفق (با مدل ${resAi.usedModel}). پاسخ: "${resAi.text.trim()}"`;
-        return jsonResponse({ success: true, report });
-      } catch (err: any) {
-        report.geminiPing = `خطا: ${err?.message || err}`;
-        report.errors.push(String(err));
-        return jsonResponse({ success: false, report });
-      }
+  // 4. Bridge Status
+  if (url.pathname === '/api/bridge-status') {
+    return jsonResponse({
+      active: !!apiKey,
+      bridge: 'Cloudflare Pages & Worker Edge Runtime',
+      model: env?.PRIMARY_MODEL || PRIMARY_MODEL,
+      noVpnNeeded: true,
+      message: apiKey
+        ? 'پل ارتباطی جمینای در سرور ورکر فعال و آماده است.'
+        : 'کلید GEMINI_API_KEY در متغیرهای ورکر یافت نشد. حالت آفلاین فعال است.',
+    });
+  }
+
+  // 5. Ping & Test Model
+  if ((url.pathname === '/api/ping-model' || url.pathname === '/api/test-gemini-model') && request.method === 'POST') {
+    const body: any = await request.json().catch(() => ({}));
+    const targetModel = body.modelName || env?.PRIMARY_MODEL || PRIMARY_MODEL;
+
+    if (!apiKey) {
+      return jsonResponse({
+        success: false,
+        modelName: targetModel,
+        latencyMs: 0,
+        error: 'کلید GEMINI_API_KEY در متغیرهای ورکر تنظیم نشده است.',
+      });
     }
 
-    // 7. Generate Procedural / Gemini Case
-    if (url.pathname === '/api/generate-case' && request.method === 'POST') {
-      try {
-        const body: any = await request.json().catch(() => ({}));
-        const requestedTopic = (body.topicText || body.customIdea || 'جنایت پیچیده').trim();
+    const startTime = Date.now();
+    try {
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        'سلام. فقط کلمه "وصل" را برگردان.',
+        false,
+        0.1,
+        10,
+        [targetModel, ...MODEL_TIER_MAIN],
+        customBaseUrl
+      );
+      const latencyMs = Date.now() - startTime;
+      return jsonResponse({
+        success: true,
+        modelName: resAi.usedModel,
+        latencyMs,
+        responseText: resAi.text.trim(),
+      });
+    } catch (err: any) {
+      return jsonResponse({
+        success: false,
+        modelName: targetModel,
+        latencyMs: Date.now() - startTime,
+        error: `خطا در پینگ ورکر: ${err?.message || err}`,
+      });
+    }
+  }
 
-        if (!apiKey) {
-          return jsonResponse(generateProceduralCase(requestedTopic));
-        }
+  // 6. Diagnose Gemini
+  if (url.pathname === '/api/diagnose-gemini' && request.method === 'POST') {
+    const report: any = {
+      timestamp: new Date().toISOString(),
+      apiKeyConfigured: !!apiKey,
+      apiKeyMasked: apiKey ? apiKey.substring(0, 6) + '...' + apiKey.substring(apiKey.length - 4) : 'یافت نشد',
+      customBaseUrl: customBaseUrl || 'پیش‌فرض (Google API)',
+      dnsTest: 'موفق (اتصال Edge)',
+      geminiPing: 'کامل نشده',
+      errors: [],
+    };
 
-        const prompt = `شما داستان‌نویس و طراح ارشد پرونده‌های قضایی برای بازی «آقای قاضی» هستید.
+    if (!apiKey) {
+      report.geminiPing = 'کلید API تنظیم نشده است';
+      return jsonResponse({ success: false, report });
+    }
+
+    try {
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        'سلام. فقط کلمه "موفق" را برگردان.',
+        false,
+        0.1,
+        10,
+        MODEL_TIER_MAIN,
+        customBaseUrl
+      );
+      report.geminiPing = `موفق (با مدل ${resAi.usedModel}). پاسخ: "${resAi.text.trim()}"`;
+      return jsonResponse({ success: true, report });
+    } catch (err: any) {
+      report.geminiPing = `خطا: ${err?.message || err}`;
+      report.errors.push(String(err));
+      return jsonResponse({ success: false, report });
+    }
+  }
+
+  // 7. Generate Procedural / Gemini Case
+  if (url.pathname === '/api/generate-case' && request.method === 'POST') {
+    try {
+      const body: any = await request.json().catch(() => ({}));
+      const requestedTopic = (body.topicText || body.customIdea || 'جنایت پیچیده').trim();
+
+      if (!apiKey) {
+        return jsonResponse(generateProceduralCase(requestedTopic));
+      }
+
+      const prompt = `شما داستان‌نویس و طراح ارشد پرونده‌های قضایی برای بازی «آقای قاضی» هستید.
 موضوع کلی پرونده که کاربر درخواست کرده است: "${requestedTopic}"
 
 قانون حیاتی و طلایی معمایی ۵۰/۵۰:
@@ -563,51 +563,51 @@ export default {
   }
 }`;
 
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          prompt,
-          true,
-          0.85,
-          5000,
-          MODEL_TIER_MAIN,
-          customBaseUrl
-        );
-        const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
-        return jsonResponse({
-          ...parsed,
-          allowsLiveConfession: Math.random() < 0.15,
-          _activeModel: resAi.usedModel,
-        });
-      } catch {
-        const body: any = await request.json().catch(() => ({}));
-        return jsonResponse(generateProceduralCase(body.topicText || 'جنایت'));
-      }
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        prompt,
+        true,
+        0.85,
+        5000,
+        MODEL_TIER_MAIN,
+        customBaseUrl
+      );
+      const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
+      return jsonResponse({
+        ...parsed,
+        allowsLiveConfession: Math.random() < 0.15,
+        _activeModel: resAi.usedModel,
+      });
+    } catch {
+      const body: any = await request.json().catch(() => ({}));
+      return jsonResponse(generateProceduralCase(body.topicText || 'جنایت'));
     }
+  }
 
-    // 8. Generate Real-World Historical Case
-    if (url.pathname === '/api/generate-real-case' && request.method === 'POST') {
-      try {
-        const body: any = await request.json().catch(() => ({}));
-        const { caseNameOrTopic, category, isRandom } = body;
-        let queryDesc = (caseNameOrTopic || '').trim();
+  // 8. Generate Real-World Historical Case
+  if (url.pathname === '/api/generate-real-case' && request.method === 'POST') {
+    try {
+      const body: any = await request.json().catch(() => ({}));
+      const { caseNameOrTopic, category, isRandom } = body;
+      let queryDesc = (caseNameOrTopic || '').trim();
 
-        if (isRandom || !queryDesc) {
-          const randomCuratedThemes = [
-            'یک پرونده واقعی و فوق‌العاده دراماتیک قتل مرموز یا جنایی در تاریخ جهان',
-            'یکی از جنجالی‌ترین پرونده‌های جنایی یا قتل‌های دادگاه‌های تاریخ ایران',
-            'بزرگ‌ترین و عجیب‌ترین پرونده سرقت موزه، سرقت بانک یا کلاهبرداری مالی در تاریخ',
-            'پرونده واقعی ترور یا مسمومیت مشکوک با مواد سمی ناشناخته در تاریخ',
-          ];
-          queryDesc = randomCuratedThemes[Math.floor(Math.random() * randomCuratedThemes.length)];
-        } else if (category) {
-          queryDesc = `پرونده واقعی در موضوع: ${category} - ${queryDesc}`;
-        }
+      if (isRandom || !queryDesc) {
+        const randomCuratedThemes = [
+          'یک پرونده واقعی و فوق‌العاده دراماتیک قتل مرموز یا جنایی در تاریخ جهان',
+          'یکی از جنجالی‌ترین پرونده‌های جنایی یا قتل‌های دادگاه‌های تاریخ ایران',
+          'بزرگ‌ترین و عجیب‌ترین پرونده سرقت موزه، سرقت بانک یا کلاهبرداری مالی در تاریخ',
+          'پرونده واقعی ترور یا مسمومیت مشکوک با مواد سمی ناشناخته در تاریخ',
+        ];
+        queryDesc = randomCuratedThemes[Math.floor(Math.random() * randomCuratedThemes.length)];
+      } else if (category) {
+        queryDesc = `پرونده واقعی در موضوع: ${category} - ${queryDesc}`;
+      }
 
-        if (!apiKey) {
-          return jsonResponse(generateProceduralCase(queryDesc));
-        }
+      if (!apiKey) {
+        return jsonResponse(generateProceduralCase(queryDesc));
+      }
 
-        const prompt = `شما مورخ ارشد جنایی و طراح پرونده‌های واقعی برای بازی دادگاه «آقای قاضی» هستید.
+      const prompt = `شما مورخ ارشد جنایی و طراح پرونده‌های واقعی برای بازی دادگاه «آقای قاضی» هستید.
 درخواست کاربر / سوژه پرونده واقعی: "${queryDesc}"
 
 یک پرونده واقعی، مستند و تاریخی از تاریخ ایران یا جهان را با مشخصات واقعی بازسازی کنید.
@@ -679,45 +679,45 @@ export default {
   }
 }`;
 
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          prompt,
-          true,
-          0.7,
-          5000,
-          MODEL_TIER_MAIN,
-          customBaseUrl
-        );
-        const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
-        return jsonResponse({
-          ...parsed,
-          allowsLiveConfession: false,
-          _activeModel: resAi.usedModel,
-        });
-      } catch {
-        return jsonResponse(generateProceduralCase('پرونده تاریخی'));
-      }
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        prompt,
+        true,
+        0.7,
+        5000,
+        MODEL_TIER_MAIN,
+        customBaseUrl
+      );
+      const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
+      return jsonResponse({
+        ...parsed,
+        allowsLiveConfession: false,
+        _activeModel: resAi.usedModel,
+      });
+    } catch {
+      return jsonResponse(generateProceduralCase('پرونده تاریخی'));
     }
+  }
 
-    // 9. Generate Heated Argument
-    if (url.pathname === '/api/generate-argument' && request.method === 'POST') {
-      try {
-        const body: any = await request.json().catch(() => ({}));
-        const { caseData, lastExchange } = body;
-        const chars = caseData?.characters || [];
+  // 9. Generate Heated Argument
+  if (url.pathname === '/api/generate-argument' && request.method === 'POST') {
+    try {
+      const body: any = await request.json().catch(() => ({}));
+      const { caseData, lastExchange } = body;
+      const chars = caseData?.characters || [];
 
-        if (!apiKey || chars.length === 0) {
-          const c1 = chars[0] || { name: 'متهم اول' };
-          const c2 = chars[1] || { name: 'شاکی' };
-          return jsonResponse({
-            argument: [
-              { senderName: c1.name, text: 'جناب قاضی، این ادعاها کذب محض است!' },
-              { senderName: c2.name, text: 'دروغ نگو! اسناد همه چیز را اثبات می‌کند!' },
-            ],
-          });
-        }
+      if (!apiKey || chars.length === 0) {
+        const c1 = chars[0] || { name: 'متهم اول' };
+        const c2 = chars[1] || { name: 'شاکی' };
+        return jsonResponse({
+          argument: [
+            { senderName: c1.name, text: 'جناب قاضی، این ادعاها کذب محض است!' },
+            { senderName: c2.name, text: 'دروغ نگو! اسناد همه چیز را اثبات می‌کند!' },
+          ],
+        });
+      }
 
-        const prompt = `شما کارگردان تئاتر قضایی بازی «آقای قاضی» هستید.
+      const prompt = `شما کارگردان تئاتر قضایی بازی «آقای قاضی» هستید.
 یک مرافعه لفظی شدید و تند بین کاراکترهای دادگاه بنویسید:
 شخصیت‌ها: ${chars.map((c: Character) => `${c.name} (${c.roleTitle})`).join(', ')}
 موضوع: ${caseData.title}
@@ -729,50 +729,50 @@ export default {
   { "senderName": "نام شخص دوم", "text": "پاسخ تند دوم..." }
 ]`;
 
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          prompt,
-          true,
-          0.9,
-          800,
-          MODEL_TIER_FAST_LITE,
-          customBaseUrl
-        );
-        const argument = parseJsonFromAi<unknown>(resAi.text);
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        prompt,
+        true,
+        0.9,
+        800,
+        MODEL_TIER_FAST_LITE,
+        customBaseUrl
+      );
+      const argument = parseJsonFromAi<unknown>(resAi.text);
+      return jsonResponse({
+        argument,
+        _activeModel: resAi.usedModel,
+      });
+    } catch {
+      return jsonResponse({
+        argument: [
+          { senderName: 'متهم', text: 'جناب قاضی، من بی‌گناهم!' },
+          { senderName: 'شاکی', text: 'مدارک برعکس این را نشان می‌دهد!' },
+        ],
+      });
+    }
+  }
+
+  // 10. Interrogate Character
+  if (url.pathname === '/api/interrogate' && request.method === 'POST') {
+    try {
+      const body: any = await request.json().catch(() => ({}));
+      const { caseData, question, history } = body;
+      const charsList = caseData?.characters || [];
+
+      if (!apiKey || charsList.length === 0) {
+        const char = charsList[0] || { id: 'char-1', name: 'متهم' };
         return jsonResponse({
-          argument,
-          _activeModel: resAi.usedModel,
-        });
-      } catch {
-        return jsonResponse({
-          argument: [
-            { senderName: 'متهم', text: 'جناب قاضی، من بی‌گناهم!' },
-            { senderName: 'شاکی', text: 'مدارک برعکس این را نشان می‌دهد!' },
-          ],
+          addressedCharacterId: char.id,
+          addressedCharacterName: char.name,
+          speech: 'جناب قاضی، بنده توضیحات را با صداقت عرض کردم.',
+          innerThought: undefined,
+          isConfession: false,
+          interruption: null,
         });
       }
-    }
 
-    // 10. Interrogate Character
-    if (url.pathname === '/api/interrogate' && request.method === 'POST') {
-      try {
-        const body: any = await request.json().catch(() => ({}));
-        const { caseData, question, history } = body;
-        const charsList = caseData?.characters || [];
-
-        if (!apiKey || charsList.length === 0) {
-          const char = charsList[0] || { id: 'char-1', name: 'متهم' };
-          return jsonResponse({
-            addressedCharacterId: char.id,
-            addressedCharacterName: char.name,
-            speech: 'جناب قاضی، بنده توضیحات را با صداقت عرض کردم.',
-            innerThought: undefined,
-            isConfession: false,
-            interruption: null,
-          });
-        }
-
-        const prompt = `شما بازیگران و هماهنگ‌کننده دادگاه «آقای قاضی» هستید.
+      const prompt = `شما بازیگران و هماهنگ‌کننده دادگاه «آقای قاضی» هستید.
 شخصیت‌های دادگاه:
 ${charsList.map((c: Character) => `${c.id}: ${c.name} (${c.roleTitle}) - ${c.occupation}`).join('\n')}
 
@@ -798,79 +798,79 @@ ${charsList.map((c: Character) => `${c.id}: ${c.name} (${c.roleTitle}) - ${c.occ
   "interruption": null
 }`;
 
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          prompt,
-          true,
-          0.85,
-          2000,
-          MODEL_TIER_MAIN,
-          customBaseUrl
-        );
-        const parsed = parseJsonFromAi<any>(resAi.text);
-        return jsonResponse({
-          ...parsed,
-          _activeModel: resAi.usedModel,
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        prompt,
+        true,
+        0.85,
+        2000,
+        MODEL_TIER_MAIN,
+        customBaseUrl
+      );
+      const parsed = parseJsonFromAi<any>(resAi.text);
+      return jsonResponse({
+        ...parsed,
+        _activeModel: resAi.usedModel,
+      });
+    } catch {
+      return jsonResponse({
+        addressedCharacterId: 'char-1',
+        addressedCharacterName: 'شخص حاضر در دادگاه',
+        speech: 'جناب قاضی، پاسخ لازم در پرونده قید شده است.',
+        isConfession: false,
+        interruption: null,
+      });
+    }
+  }
+
+  // 11. Judge Verdict Evaluation
+  if (url.pathname === '/api/judge-verdict' && request.method === 'POST') {
+    try {
+      const body: any = await request.json().catch(() => ({}));
+      const { caseData, accusedId, verdictType, verdictReasoning, penalty, chargeName, individualDecisions } = body;
+      const realCulpritId = caseData?.hiddenTruth?.realCulpritId;
+
+      const individualDecisionsList = Array.isArray(individualDecisions) && individualDecisions.length > 0
+        ? individualDecisions
+        : (caseData?.characters || []).map((c: Character) => ({
+            characterId: c.id,
+            characterName: c.name,
+            status: c.id === accusedId ? verdictType : 'acquitted',
+            chargeAndPenalty: c.id === accusedId ? `${chargeName || ''} - ${penalty || ''}` : 'تبرئه',
+          }));
+
+      const realCulpritFound = individualDecisionsList.some(
+        (d: any) => d.characterId === realCulpritId && d.status === 'guilty'
+      ) || (accusedId === realCulpritId && verdictType === 'guilty');
+
+      if (!apiKey) {
+        const individualEvaluations = (caseData?.characters || []).map((c: Character) => {
+          const userDec = individualDecisionsList.find((d: any) => d.characterId === c.id);
+          const isCulprit = c.id === realCulpritId;
+          const markedGuilty = userDec?.status === 'guilty';
+          const isRight = (isCulprit && markedGuilty) || (!isCulprit && !markedGuilty);
+          return {
+            characterName: c.name,
+            statusSummary: markedGuilty ? 'محکوم به مجازات' : 'تبرئه / مختومه',
+            isCorrectVerdict: isRight,
+            note: isRight ? 'احراز صحیح وضعیت قضایی' : 'مغایرت با حقیقت مادی',
+          };
         });
-      } catch {
+
         return jsonResponse({
-          addressedCharacterId: 'char-1',
-          addressedCharacterName: 'شخص حاضر در دادگاه',
-          speech: 'جناب قاضی، پاسخ لازم در پرونده قید شده است.',
-          isConfession: false,
-          interruption: null,
+          isCorrect: realCulpritFound,
+          justiceRating: realCulpritFound ? 95 : 35,
+          truthRevealed: caseData?.hiddenTruth?.howCrimeHappened || 'حقیقت بررسی شد.',
+          feedback: realCulpritFound ? 'عدالت به درستی محقق شد.' : 'متاسفانه مقصر واقعی شناسایی نشد.',
+          deceptionBusted: realCulpritFound,
+          epilogue: 'پرونده به اجرای احکام ارسال شد.',
+          chargeName: chargeName || 'احراز مجرمیت',
+          penaltyApplied: penalty || 'مجازات تعیینی',
+          individualEvaluations,
         });
       }
-    }
 
-    // 11. Judge Verdict Evaluation
-    if (url.pathname === '/api/judge-verdict' && request.method === 'POST') {
-      try {
-        const body: any = await request.json().catch(() => ({}));
-        const { caseData, accusedId, verdictType, verdictReasoning, penalty, chargeName, individualDecisions } = body;
-        const realCulpritId = caseData?.hiddenTruth?.realCulpritId;
-
-        const individualDecisionsList = Array.isArray(individualDecisions) && individualDecisions.length > 0
-          ? individualDecisions
-          : (caseData?.characters || []).map((c: Character) => ({
-              characterId: c.id,
-              characterName: c.name,
-              status: c.id === accusedId ? verdictType : 'acquitted',
-              chargeAndPenalty: c.id === accusedId ? `${chargeName || ''} - ${penalty || ''}` : 'تبرئه',
-            }));
-
-        const realCulpritFound = individualDecisionsList.some(
-          (d: any) => d.characterId === realCulpritId && d.status === 'guilty'
-        ) || (accusedId === realCulpritId && verdictType === 'guilty');
-
-        if (!apiKey) {
-          const individualEvaluations = (caseData?.characters || []).map((c: Character) => {
-            const userDec = individualDecisionsList.find((d: any) => d.characterId === c.id);
-            const isCulprit = c.id === realCulpritId;
-            const markedGuilty = userDec?.status === 'guilty';
-            const isRight = (isCulprit && markedGuilty) || (!isCulprit && !markedGuilty);
-            return {
-              characterName: c.name,
-              statusSummary: markedGuilty ? 'محکوم به مجازات' : 'تبرئه / مختومه',
-              isCorrectVerdict: isRight,
-              note: isRight ? 'احراز صحیح وضعیت قضایی' : 'مغایرت با حقیقت مادی',
-            };
-          });
-
-          return jsonResponse({
-            isCorrect: realCulpritFound,
-            justiceRating: realCulpritFound ? 95 : 35,
-            truthRevealed: caseData?.hiddenTruth?.howCrimeHappened || 'حقیقت بررسی شد.',
-            feedback: realCulpritFound ? 'عدالت به درستی محقق شد.' : 'متاسفانه مقصر واقعی شناسایی نشد.',
-            deceptionBusted: realCulpritFound,
-            epilogue: 'پرونده به اجرای احکام ارسال شد.',
-            chargeName: chargeName || 'احراز مجرمیت',
-            penaltyApplied: penalty || 'مجازات تعیینی',
-            individualEvaluations,
-          });
-        }
-
-        const prompt = `شما هیئت نظارت قضایی بازی «آقای قاضی» هستید.
+      const prompt = `شما هیئت نظارت قضایی بازی «آقای قاضی» هستید.
 پرونده: ${caseData.title}
 مقصر واقعی: ${caseData.hiddenTruth?.realCulpritName} (آیدی: ${realCulpritId})
 حقیقت: ${caseData.hiddenTruth?.howCrimeHappened}
@@ -902,37 +902,36 @@ ${individualDecisionsList.map((d: any) => `• ${d.characterName}: [${d.status}]
   ]
 }`;
 
-        const resAi = await generateWorkerRestAi(
-          apiKey,
-          prompt,
-          true,
-          0.7,
-          1800,
-          MODEL_TIER_FAST_LITE,
-          customBaseUrl
-        );
-        const parsed = parseJsonFromAi<any>(resAi.text);
-        return jsonResponse({
-          ...parsed,
-          _activeModel: resAi.usedModel,
-        });
-      } catch {
-        return jsonResponse({
-          isCorrect: true,
-          justiceRating: 90,
-          truthRevealed: 'پرونده رسیدگی شد.',
-          feedback: 'رأی اصدار یافت.',
-          deceptionBusted: true,
-          epilogue: 'پرونده مختومه شد.',
-        });
-      }
+      const resAi = await generateWorkerRestAi(
+        apiKey,
+        prompt,
+        true,
+        0.7,
+        1800,
+        MODEL_TIER_FAST_LITE,
+        customBaseUrl
+      );
+      const parsed = parseJsonFromAi<any>(resAi.text);
+      return jsonResponse({
+        ...parsed,
+        _activeModel: resAi.usedModel,
+      });
+    } catch {
+      return jsonResponse({
+        isCorrect: true,
+        justiceRating: 90,
+        truthRevealed: 'پرونده رسیدگی شد.',
+        feedback: 'رأی اصدار یافت.',
+        deceptionBusted: true,
+        epilogue: 'پرونده مختومه شد.',
+      });
     }
+  }
 
-    // Static Assets Fallback for Cloudflare Pages / Workers
-    if (env?.ASSETS) {
-      return env.ASSETS.fetch(request);
-    }
+  // Static Assets Fallback for Cloudflare Pages
+  if (env?.ASSETS) {
+    return env.ASSETS.fetch(request);
+  }
 
-    return new Response('Not Found', { status: 404 });
-  },
-};
+  return new Response('Not Found', { status: 404 });
+}
