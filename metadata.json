@@ -1,0 +1,6 @@
+{
+  "name": "آقای قاضی (Mr. Judge)",
+  "description": "بازی شبیه‌ساز قضاوت، دادگاه جنایی و حل معما با هوش مصنوعی جمینای - بازجویی زنده از متهم، شاکی و شهود و صدور حکم نهایی",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
