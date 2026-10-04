@@ -1,0 +1,11 @@
+name = "mr-judge-app"
+main = "worker.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+[vars]
+PRIMARY_MODEL = "gemini-3.8-flash"

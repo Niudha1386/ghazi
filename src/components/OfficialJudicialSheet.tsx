@@ -6,8 +6,9 @@ import { getDynamicCaseLabels } from '../utils/caseHeaders.ts';
 
 interface OfficialJudicialSheetProps {
   caseData: CaseDossier;
-  type: 'indictment' | 'verdict';
+  type?: 'indictment' | 'verdict';
   verdictResult?: VerdictResult | null;
+  chargeName?: string;
   judgeName?: string;
   accusedName?: string;
   verdictType?: string;
@@ -19,8 +20,9 @@ interface OfficialJudicialSheetProps {
 
 export const OfficialJudicialSheet: React.FC<OfficialJudicialSheetProps> = ({
   caseData,
-  type,
+  type = 'verdict',
   verdictResult,
+  chargeName,
   judgeName = 'آقای قاضی',
   accusedName,
   verdictType = 'guilty',
