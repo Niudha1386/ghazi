@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PRESET_CASES } from './data/presets.ts';
-import { CaseDossier, EvidenceItem, InterrogationMessage, VerdictResult, IndividualCharacterVerdict } from './types.ts';
+import { CaseDossier, EvidenceItem, InterrogationMessage, VerdictResult, IndividualCharacterVerdict, SavedCaseState } from './types.ts';
 import { soundManager } from './utils/audio.ts';
 import { Navbar } from './components/Navbar.tsx';
 import { CaseDossierView } from './components/CaseDossierView.tsx';
@@ -10,6 +10,7 @@ import { ConsultationRoom } from './components/ConsultationRoom.tsx';
 import { MainMenu } from './components/MainMenu.tsx';
 import { SettingsModal, SettingsTab } from './components/SettingsModal.tsx';
 import { OfflineIndicator } from './components/OfflineIndicator.tsx';
+import { saveActiveCaseSession, getActiveCaseSession, clearActiveCaseSession, archiveCaseSession } from './utils/storage.ts';
 import { Home, Sparkles, Settings, Volume2 } from 'lucide-react';
 
 export default function App() {
@@ -53,7 +54,57 @@ export default function App() {
 
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
 
-  // Continuous Background Playlist (Plays across ALL screens of the game sequentially and loops)
+  // Unfinished Case Session Persistence State
+  const [savedSession, setSavedSession] = useState<SavedCaseState | null>(null);
+
+  // Load active saved case on mount
+  useEffect(() => {
+    const saved = getActiveCaseSession();
+    if (saved) {
+      setSavedSession(saved);
+    }
+  }, []);
+
+  // Auto-save active case session progress whenever in game view
+  useEffect(() => {
+    if (currentView === 'game' && caseData) {
+      const activeState = {
+        id: caseData.id,
+        caseData,
+        courtroomMessages,
+        activeCharacterId,
+        characterStressMap,
+        currentTab,
+      };
+      saveActiveCaseSession(activeState);
+      const updated = getActiveCaseSession();
+      if (updated) {
+        setSavedSession(updated);
+      }
+    }
+  }, [currentView, caseData, courtroomMessages, activeCharacterId, characterStressMap, currentTab]);
+
+  // Resume unfinished saved case session
+  const handleResumeSavedCase = () => {
+    if (!savedSession || !savedSession.caseData) return;
+    setCaseData(savedSession.caseData);
+    setCourtroomMessages(savedSession.courtroomMessages || []);
+    setActiveCharacterId(savedSession.activeCharacterId || savedSession.caseData.characters[0]?.id || '');
+    setCharacterStressMap(savedSession.characterStressMap || {});
+    setCurrentTab(savedSession.currentTab || 'court');
+    setCurrentView('game');
+    soundManager.playGavel();
+  };
+
+  // Discard / Archive unfinished saved case session
+  const handleDiscardSavedCase = () => {
+    if (savedSession) {
+      archiveCaseSession(savedSession);
+    }
+    clearActiveCaseSession();
+    setSavedSession(null);
+    soundManager.playPaperRustle();
+  };
   useEffect(() => {
     soundManager.playBgMusic();
 
@@ -372,6 +423,9 @@ export default function App() {
       });
 
       const result: VerdictResult = await response.json();
+      // Clear active save once final verdict is issued
+      clearActiveCaseSession();
+      setSavedSession(null);
       return result;
     } catch (err) {
       console.error(err);
@@ -387,6 +441,12 @@ export default function App() {
 
   // When Case is confirmed and generated, go DIRECTLY to the courtroom!
   const handleCaseCreatedAndEnterCourt = (newCase: CaseDossier & { _activeModel?: string; _latencyMs?: number }) => {
+    // Archive previous save if exists
+    if (savedSession) {
+      archiveCaseSession(savedSession);
+    }
+    clearActiveCaseSession();
+
     setCaseData(newCase);
     if (newCase._activeModel) {
       setLastActiveModel(newCase._activeModel);
@@ -412,6 +472,9 @@ export default function App() {
           onGavelStrike={handleGavelClick}
           onOpenSettings={handleOpenSettings}
           activeModel={lastActiveModel}
+          savedSession={savedSession}
+          onResumeSavedCase={handleResumeSavedCase}
+          onDiscardSavedCase={handleDiscardSavedCase}
         />
       )}
 

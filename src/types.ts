@@ -150,3 +150,14 @@ export interface ConsultationMessage {
   content: string;
   timestamp: string;
 }
+
+export interface SavedCaseState {
+  id: string;
+  caseData: CaseDossier;
+  courtroomMessages: InterrogationMessage[];
+  activeCharacterId: string;
+  characterStressMap: Record<string, number>;
+  currentTab: 'dossier' | 'court' | 'verdict';
+  savedAt: string;
+  messageCount: number;
+}

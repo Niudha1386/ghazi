@@ -3,8 +3,8 @@
  * Route handler for all /api/* endpoints on Cloudflare Pages.
  */
 
-import { PRESET_CASES } from '../../src/data/presets.ts';
-import { CaseDossier, Character, EvidenceItem } from '../../src/types.ts';
+import { PRESET_CASES } from '../src/data/presets.ts';
+import { CaseDossier, Character, EvidenceItem } from '../src/types.ts';
 
 export interface EventContextEnv {
   GEMINI_API_KEY?: string;

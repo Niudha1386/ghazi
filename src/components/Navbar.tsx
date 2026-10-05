@@ -73,6 +73,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="text-[8px] sm:text-[9px] font-normal px-1 sm:px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
                   شعبه ویژه
                 </span>
+                <span className="text-[8px] sm:text-[9px] font-medium px-1 sm:px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 shrink-0 flex items-center gap-0.5" title="پیشرفت این پرونده به طور خودکار ذخیره می‌شود">
+                  <span>✓ ذخیره خودکار</span>
+                </span>
               </h1>
             </div>
             <p className="text-[10px] sm:text-xs text-stone-400 truncate max-w-[130px] sm:max-w-xs md:max-w-md">

@@ -24,8 +24,9 @@ import {
   Award,
   Settings,
   Flame,
+  Trash2,
 } from 'lucide-react';
-import { CaseDossier } from '../types.ts';
+import { CaseDossier, SavedCaseState } from '../types.ts';
 import { soundManager } from '../utils/audio.ts';
 import { useFullscreen } from '../utils/useFullscreen.ts';
 import { REAL_WORLD_CASES } from '../data/realCases.ts';
@@ -40,6 +41,9 @@ interface MainMenuProps {
   onGavelStrike: () => void;
   onOpenSettings: (tab?: SettingsTab) => void;
   activeModel?: string;
+  savedSession?: SavedCaseState | null;
+  onResumeSavedCase?: () => void;
+  onDiscardSavedCase?: () => void;
 }
 
 export const MainMenu: React.FC<MainMenuProps> = ({
@@ -51,6 +55,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   onGavelStrike,
   onOpenSettings,
   activeModel,
+  savedSession,
+  onResumeSavedCase,
+  onDiscardSavedCase,
 }) => {
   const [showRealCasesModal, setShowRealCasesModal] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
@@ -232,6 +239,68 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             شبیه‌ساز هوشمند دادرسی، بازجویی از متهمان فریبکار و حل پرونده‌های واقعی تاریخ با هوش مصنوعی
           </p>
         </div>
+
+        {/* Saved Case Resume Banner (if an unfinished case session exists) */}
+        {savedSession && savedSession.caseData && (
+          <div className="max-w-2xl mx-auto p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-950/90 via-[#1d1a2c] to-amber-950/90 border-2 border-amber-500/80 shadow-2xl space-y-3 text-right animate-in fade-in slide-in-from-top-3 duration-300">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/30 pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="flex h-3 w-3 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                </span>
+                <span className="text-xs font-black text-amber-300">📁 پرونده نیمه‌کاره شما آماده ادامه دادرسی است</span>
+              </div>
+              <span className="text-[10px] text-stone-400 font-mono">
+                ذخیره‌شده: {new Date(savedSession.savedAt).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })} - {new Date(savedSession.savedAt).toLocaleDateString('fa-IR')}
+              </span>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <h4 className="text-base sm:text-lg font-extrabold text-stone-100 flex items-center gap-2">
+                  <span>{savedSession.caseData.title}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-stone-900 border border-stone-800 text-amber-400 font-mono">
+                    کلاسه {savedSession.caseData.caseNumber}
+                  </span>
+                </h4>
+                <p className="text-xs text-stone-300 flex items-center gap-3">
+                  <span>💬 {savedSession.messageCount || savedSession.courtroomMessages.length} دیالوگ ثبت‌شده در دادگاه</span>
+                  <span>•</span>
+                  <span>👥 {savedSession.caseData.characters.length} شخص حاضر در صحن</span>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                {onResumeSavedCase && (
+                  <button
+                    onClick={() => {
+                      soundManager.playGavel();
+                      onResumeSavedCase();
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-xs sm:text-sm shadow-lg shadow-amber-950/60 flex items-center gap-2 transition cursor-pointer active:scale-95"
+                  >
+                    <Play className="w-4 h-4 fill-stone-950" />
+                    <span>ادامه قضاوت این پرونده</span>
+                  </button>
+                )}
+
+                {onDiscardSavedCase && (
+                  <button
+                    onClick={() => {
+                      soundManager.playPaperRustle();
+                      onDiscardSavedCase();
+                    }}
+                    className="p-2.5 rounded-xl bg-stone-900/90 hover:bg-red-950/60 border border-stone-800 hover:border-red-800/80 text-stone-400 hover:text-red-300 text-xs transition cursor-pointer"
+                    title="بایگانی و حذف این ذخیره نیمه‌کاره"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Action Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-4 max-w-2xl mx-auto pt-2 sm:pt-4 text-right">
