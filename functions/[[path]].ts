@@ -1,6 +1,7 @@
 /**
  * Cloudflare Pages Functions entrypoint
  * Route handler for all /api/* endpoints on Cloudflare Pages.
+ * Includes complete in-memory system logging, diagnostic probe, multi-model failover, and case generation.
  */
 
 import { PRESET_CASES } from '../src/data/presets.ts';
@@ -12,6 +13,9 @@ export interface EventContextEnv {
   GOOGLE_API_KEY?: string;
   API_KEY?: string;
   GOOGLE_GENAI_API_KEY?: string;
+  GEMINI_KEY?: string;
+  GEMINI?: string;
+  AI_API_KEY?: string;
   VITE_GEMINI_API_KEY?: string;
   GEMINI_BASE_URL?: string;
   GOOGLE_GENAI_BASE_URL?: string;
@@ -19,23 +23,48 @@ export interface EventContextEnv {
   ASSETS?: { fetch: (request: Request) => Promise<Response> };
 }
 
-const PRIMARY_MODEL = 'gemini-2.5-flash';
+// Active modern Gemini models supported on Google v1beta API
+const PRIMARY_MODEL = 'gemini-3.8-flash';
 const MODEL_TIER_MAIN = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-3.1-pro-preview',
   'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
 ];
 const MODEL_TIER_FAST_LITE = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
   'gemini-3.1-flash-lite',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-pro-preview',
 ];
+
+export interface SystemLog {
+  id: string;
+  timestamp: string;
+  type: 'info' | 'warn' | 'error' | 'success';
+  module: string;
+  message: string;
+  details?: any;
+}
+
+// In-memory log buffer for Cloudflare Pages runtime
+const workerLogs: SystemLog[] = [];
+
+function addWorkerLog(type: SystemLog['type'], module: string, message: string, details?: any) {
+  const log: SystemLog = {
+    id: `log-p-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    type,
+    module,
+    message,
+    details: details ? (typeof details === 'object' ? JSON.parse(JSON.stringify(details)) : { info: details }) : undefined,
+  };
+  workerLogs.unshift(log);
+  if (workerLogs.length > 150) {
+    workerLogs.pop();
+  }
+  console.log(`[${log.timestamp}] [${type.toUpperCase()}] [${module}] ${message}`);
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -55,29 +84,52 @@ function jsonResponse(data: unknown, status = 200) {
 
 function parseJsonFromAi<T>(rawText: string): T {
   let cleaned = (rawText || '').trim();
-  cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+  const jsonMatch = cleaned.match(/```json\s*([\s\S]*?)\s*```/i) || cleaned.match(/```\s*([\s\S]*?)\s*```/i);
+  if (jsonMatch && jsonMatch[1]) {
+    cleaned = jsonMatch[1].trim();
+  } else {
+    // If no markdown code block, extract between first { or [ and last } or ]
+    const firstBrace = cleaned.search(/[\{\[]/);
+    const lastBrace = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+  }
   return JSON.parse(cleaned) as T;
 }
 
-function extractApiKey(request: Request, env?: EventContextEnv): string {
+interface ResolvedApiKey {
+  key: string;
+  source: string;
+}
+
+function extractApiKeyWithSource(request: Request, env?: EventContextEnv, requestBody?: any): ResolvedApiKey {
   try {
     const url = new URL(request.url);
     const queryKey = url.searchParams.get('apiKey') || url.searchParams.get('key');
-    if (queryKey && queryKey.trim()) return queryKey.trim();
+    if (queryKey && queryKey.trim()) return { key: queryKey.trim(), source: 'query_param' };
   } catch {
     // ignore URL parse error
   }
 
   const headerKey = request.headers.get('x-api-key') || request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (headerKey && headerKey.trim()) return headerKey.trim();
+  if (headerKey && headerKey.trim()) return { key: headerKey.trim(), source: 'header' };
+
+  if (requestBody && typeof requestBody === 'object') {
+    if (requestBody.apiKey && typeof requestBody.apiKey === 'string') return { key: requestBody.apiKey.trim(), source: 'body' };
+    if (requestBody.geminiApiKey && typeof requestBody.geminiApiKey === 'string') return { key: requestBody.geminiApiKey.trim(), source: 'body' };
+  }
 
   if (env) {
-    if (env.GEMINI_API_KEY && env.GEMINI_API_KEY.trim()) return env.GEMINI_API_KEY.trim();
-    if (env.MY_GEMINI_API_KEY && env.MY_GEMINI_API_KEY.trim()) return env.MY_GEMINI_API_KEY.trim();
-    if (env.GOOGLE_API_KEY && env.GOOGLE_API_KEY.trim()) return env.GOOGLE_API_KEY.trim();
-    if (env.API_KEY && env.API_KEY.trim()) return env.API_KEY.trim();
-    if (env.GOOGLE_GENAI_API_KEY && env.GOOGLE_GENAI_API_KEY.trim()) return env.GOOGLE_GENAI_API_KEY.trim();
-    if (env.VITE_GEMINI_API_KEY && env.VITE_GEMINI_API_KEY.trim()) return env.VITE_GEMINI_API_KEY.trim();
+    if (env.GEMINI_API_KEY && env.GEMINI_API_KEY.trim()) return { key: env.GEMINI_API_KEY.trim(), source: 'env.GEMINI_API_KEY' };
+    if (env.MY_GEMINI_API_KEY && env.MY_GEMINI_API_KEY.trim()) return { key: env.MY_GEMINI_API_KEY.trim(), source: 'env.MY_GEMINI_API_KEY' };
+    if (env.GOOGLE_API_KEY && env.GOOGLE_API_KEY.trim()) return { key: env.GOOGLE_API_KEY.trim(), source: 'env.GOOGLE_API_KEY' };
+    if (env.API_KEY && env.API_KEY.trim()) return { key: env.API_KEY.trim(), source: 'env.API_KEY' };
+    if (env.GOOGLE_GENAI_API_KEY && env.GOOGLE_GENAI_API_KEY.trim()) return { key: env.GOOGLE_GENAI_API_KEY.trim(), source: 'env.GOOGLE_GENAI_API_KEY' };
+    if (env.GEMINI_KEY && env.GEMINI_KEY.trim()) return { key: env.GEMINI_KEY.trim(), source: 'env.GEMINI_KEY' };
+    if (env.GEMINI && env.GEMINI.trim()) return { key: env.GEMINI.trim(), source: 'env.GEMINI' };
+    if (env.AI_API_KEY && env.AI_API_KEY.trim()) return { key: env.AI_API_KEY.trim(), source: 'env.AI_API_KEY' };
+    if (env.VITE_GEMINI_API_KEY && env.VITE_GEMINI_API_KEY.trim()) return { key: env.VITE_GEMINI_API_KEY.trim(), source: 'env.VITE_GEMINI_API_KEY' };
   }
 
   if (typeof process !== 'undefined' && process?.env) {
@@ -88,10 +140,10 @@ function extractApiKey(request: Request, env?: EventContextEnv): string {
       process.env.API_KEY ||
       process.env.GOOGLE_GENAI_API_KEY ||
       process.env.VITE_GEMINI_API_KEY;
-    if (pKey && pKey.trim()) return pKey.trim();
+    if (pKey && pKey.trim()) return { key: pKey.trim(), source: 'process.env' };
   }
 
-  return '';
+  return { key: '', source: 'none' };
 }
 
 function extractCustomBaseUrl(env?: EventContextEnv): string {
@@ -248,6 +300,7 @@ async function generateWorkerRestAi(
   customBaseUrl?: string
 ) {
   if (!apiKey) {
+    addWorkerLog('error', 'GeminiWorker', 'فراخوانی هوش مصنوعی بدون کلید API رد شد.');
     throw new Error('No Gemini API key supplied');
   }
 
@@ -255,15 +308,22 @@ async function generateWorkerRestAi(
   const baseUrl = (customBaseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
 
   for (const modelCandidate of modelPool) {
+    const startTime = Date.now();
     try {
+      addWorkerLog('info', 'GeminiWorker', `ارسال درخواست به مدل [${modelCandidate}] (JSON: ${isJsonMode})`);
       const endpoint = `${baseUrl}/v1beta/models/${modelCandidate}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      
+      const generationConfig: Record<string, any> = {
+        temperature,
+        ...(isJsonMode ? { responseMimeType: 'application/json' } : {}),
+      };
+      if (maxOutputTokens) {
+        generationConfig.maxOutputTokens = maxOutputTokens;
+      }
+
       const reqBody: any = {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature,
-          ...(isJsonMode ? { responseMimeType: 'application/json' } : {}),
-          ...(maxOutputTokens ? { maxOutputTokens } : {}),
-        },
+        generationConfig,
       };
 
       const res = await fetch(endpoint, {
@@ -275,25 +335,33 @@ async function generateWorkerRestAi(
         body: JSON.stringify(reqBody),
       });
 
+      const latencyMs = Date.now() - startTime;
+
       if (!res.ok) {
         const errJson: any = await res.json().catch(() => null);
         const errMsg = errJson?.error?.message || (await res.text().catch(() => '')) || res.statusText;
         lastErrorMsg = `[Model ${modelCandidate} HTTP ${res.status}]: ${errMsg}`;
+        addWorkerLog('warn', 'GeminiWorker', `خطا در مدل [${modelCandidate}] (کد ${res.status}) پس از ${latencyMs}ms: ${errMsg}`);
         continue;
       }
 
       const data: any = await res.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
-        return { text, usedModel: modelCandidate };
+        addWorkerLog('success', 'GeminiWorker', `پاسخ موفق از مدل [${modelCandidate}] در ${latencyMs}ms (${text.length} کاراکتر)`);
+        return { text, usedModel: modelCandidate, latencyMs };
       } else {
-        lastErrorMsg = `[Model ${modelCandidate}]: Empty candidate text returned`;
+        lastErrorMsg = `[Model ${modelCandidate}]: متن خروجی خالی برگردانده شد`;
+        addWorkerLog('warn', 'GeminiWorker', lastErrorMsg);
       }
     } catch (err: any) {
+      const latencyMs = Date.now() - startTime;
       lastErrorMsg = `[Model ${modelCandidate}]: ${err?.message || err}`;
+      addWorkerLog('error', 'GeminiWorker', `خطای شبکه در مدل [${modelCandidate}] پس از ${latencyMs}ms: ${err?.message || err}`);
     }
   }
 
+  addWorkerLog('error', 'GeminiWorker', `تمامی مدل‌های استخر با شکست مواجه شدند. آخرین خطا: ${lastErrorMsg}`);
   throw new Error(`All Gemini candidate models failed. Details: ${lastErrorMsg}`);
 }
 
@@ -305,27 +373,48 @@ export async function onRequest(context: { request: Request; env: EventContextEn
     return new Response(null, { headers: corsHeaders });
   }
 
-  const apiKey = extractApiKey(request, env);
+  let requestBody: any = null;
+  if (request.method === 'POST') {
+    try {
+      requestBody = await request.json();
+    } catch {
+      requestBody = {};
+    }
+  }
+
+  const { key: apiKey, source: apiKeySource } = extractApiKeyWithSource(request, env, requestBody);
   const customBaseUrl = extractCustomBaseUrl(env);
+
+  // Initial log on first call if log buffer is empty
+  if (workerLogs.length === 0) {
+    addWorkerLog(
+      apiKey ? 'success' : 'warn',
+      'WorkerInit',
+      apiKey
+        ? `محیط ورکر پیجز فعال شد. کلید API از منبع [${apiKeySource}] شناسایی شد (${apiKey.substring(0, 6)}...).`
+        : 'محیط ورکر پیجز فعال شد اما هیچ کلید API در تنظیمات یافت نشد (حالت آفلاین).'
+    );
+  }
 
   // 1. Preset Cases
   if (url.pathname === '/api/preset-cases') {
     return jsonResponse(PRESET_CASES);
   }
 
-  // 2. System Logs
+  // 2. System Logs (Active In-Memory Logging for Frontend UI)
   if (url.pathname === '/api/system-logs') {
-    return jsonResponse([
+    const logsToReturn = workerLogs.length > 0 ? workerLogs : [
       {
         id: 'log-worker-init',
         timestamp: new Date().toISOString(),
-        type: apiKey ? 'success' : 'warn',
+        type: (apiKey ? 'success' : 'warn') as SystemLog['type'],
         module: 'CloudflarePages',
         message: apiKey
-          ? `سرویس ورکر پیجزم با کلید API فعال است. (${apiKey.substring(0, 6)}...)`
-          : 'سرویس ورکر در حالت شبیه‌ساز آفلاین است (کلید API یافت نشد).',
+          ? `سرویس ورکر فعال است. کلید API (${apiKey.substring(0, 6)}...) از [${apiKeySource}] شناسایی شد.`
+          : 'سرویس ورکر در حالت آفلاین است (هیچ متغیر API در ورکر یافت نشد).',
       },
-    ]);
+    ];
+    return jsonResponse(logsToReturn);
   }
 
   // 3. Models Info
@@ -334,6 +423,7 @@ export async function onRequest(context: { request: Request; env: EventContextEn
       primaryModel: env?.PRIMARY_MODEL || PRIMARY_MODEL,
       models: MODEL_TIER_MAIN,
       hasApiKey: !!apiKey,
+      apiKeySource,
     });
   }
 
@@ -344,38 +434,45 @@ export async function onRequest(context: { request: Request; env: EventContextEn
       bridge: 'Cloudflare Pages & Worker Edge Runtime',
       model: env?.PRIMARY_MODEL || PRIMARY_MODEL,
       noVpnNeeded: true,
+      apiKeySource,
       message: apiKey
-        ? 'پل ارتباطی جمینای در سرور ورکر فعال و آماده است.'
-        : 'کلید GEMINI_API_KEY در متغیرهای ورکر یافت نشد. حالت آفلاین فعال است.',
+        ? `پل ارتباطی جمینای در سرور ورکر فعال است. (منبع: ${apiKeySource})`
+        : 'کلید GEMINI_API_KEY در تنظیمات ورکر یافت نشد. حالت آفلاین فعال است.',
     });
   }
 
-  // 5. Ping & Test Model
+  // 5. Ping & Test Model Endpoint (for Settings modal & model tester)
   if ((url.pathname === '/api/ping-model' || url.pathname === '/api/test-gemini-model') && request.method === 'POST') {
-    const body: any = await request.json().catch(() => ({}));
-    const targetModel = body.modelName || env?.PRIMARY_MODEL || PRIMARY_MODEL;
+    const targetModel = requestBody?.modelName || env?.PRIMARY_MODEL || PRIMARY_MODEL;
+    const testPrompt = requestBody?.prompt || 'تست اتصال دیوان عدالت جنایی. در یک کلمه پاسخ بده: آماده';
+
+    addWorkerLog('info', 'ModelTester', `شروع آزمون اتصال برای مدل [${targetModel}]`);
 
     if (!apiKey) {
+      const errMsg = 'کلید GEMINI_API_KEY در متغیرهای ورکر کلودفلر (Settings > Variables and Secrets) تنظیم نشده است.';
+      addWorkerLog('error', 'ModelTester', `تست مدل ${targetModel} ناموفق: ${errMsg}`);
       return jsonResponse({
         success: false,
         modelName: targetModel,
         latencyMs: 0,
-        error: 'کلید GEMINI_API_KEY در متغیرهای ورکر تنظیم نشده است.',
+        error: errMsg,
       });
     }
 
     const startTime = Date.now();
     try {
+      const poolToTry = [targetModel, ...MODEL_TIER_MAIN.filter((m) => m !== targetModel)];
       const resAi = await generateWorkerRestAi(
         apiKey,
-        'سلام. فقط کلمه "وصل" را برگردان.',
+        testPrompt,
         false,
         0.1,
-        10,
-        [targetModel, ...MODEL_TIER_MAIN],
+        250,
+        poolToTry,
         customBaseUrl
       );
       const latencyMs = Date.now() - startTime;
+      addWorkerLog('success', 'ModelTester', `آزمون مدل [${resAi.usedModel}] با موفقیت پایان یافت (${latencyMs}ms): "${resAi.text.trim()}"`);
       return jsonResponse({
         success: true,
         modelName: resAi.usedModel,
@@ -383,29 +480,36 @@ export async function onRequest(context: { request: Request; env: EventContextEn
         responseText: resAi.text.trim(),
       });
     } catch (err: any) {
+      const latencyMs = Date.now() - startTime;
+      const errMsg = err?.message || String(err);
+      addWorkerLog('error', 'ModelTester', `آزمون مدل [${targetModel}] ناموفق بود: ${errMsg}`);
       return jsonResponse({
         success: false,
         modelName: targetModel,
-        latencyMs: Date.now() - startTime,
-        error: `خطا در پینگ ورکر: ${err?.message || err}`,
+        latencyMs,
+        error: errMsg,
       });
     }
   }
 
-  // 6. Diagnose Gemini
+  // 6. Diagnose Gemini Comprehensive Probe
   if (url.pathname === '/api/diagnose-gemini' && request.method === 'POST') {
+    addWorkerLog('info', 'Diagnostics', 'درخواست تست عیب‌یابی جامع جمینای روی ورکر دریافت شد.');
+
     const report: any = {
       timestamp: new Date().toISOString(),
       apiKeyConfigured: !!apiKey,
+      apiKeySource,
       apiKeyMasked: apiKey ? apiKey.substring(0, 6) + '...' + apiKey.substring(apiKey.length - 4) : 'یافت نشد',
-      customBaseUrl: customBaseUrl || 'پیش‌فرض (Google API)',
+      customBaseUrl: customBaseUrl || 'پیش‌فرض (Google Generative AI)',
       dnsTest: 'موفق (اتصال Edge)',
       geminiPing: 'کامل نشده',
       errors: [],
     };
 
     if (!apiKey) {
-      report.geminiPing = 'کلید API تنظیم نشده است';
+      report.geminiPing = 'کلید API تنظیم نشده است. لطفاً در پنل ورکر متغیر GEMINI_API_KEY را اضافه کنید.';
+      addWorkerLog('warn', 'Diagnostics', 'تست عیب‌یابی: کلید API یافت نشد.');
       return jsonResponse({ success: false, report });
     }
 
@@ -415,30 +519,33 @@ export async function onRequest(context: { request: Request; env: EventContextEn
         'سلام. فقط کلمه "موفق" را برگردان.',
         false,
         0.1,
-        10,
+        100,
         MODEL_TIER_MAIN,
         customBaseUrl
       );
-      report.geminiPing = `موفق (با مدل ${resAi.usedModel}). پاسخ: "${resAi.text.trim()}"`;
+      report.geminiPing = `موفق (با مدل ${resAi.usedModel} در ${resAi.latencyMs}ms). پاسخ: "${resAi.text.trim()}"`;
+      addWorkerLog('success', 'Diagnostics', `تست عیب‌یابی موفق بود با مدل [${resAi.usedModel}]: "${resAi.text.trim()}"`);
       return jsonResponse({ success: true, report });
     } catch (err: any) {
-      report.geminiPing = `خطا: ${err?.message || err}`;
-      report.errors.push(String(err));
+      const errMsg = err?.message || String(err);
+      report.geminiPing = `خطا در برقراری ارتباط: ${errMsg}`;
+      report.errors.push(errMsg);
+      addWorkerLog('error', 'Diagnostics', `تست عیب‌یابی شکست خورد: ${errMsg}`);
       return jsonResponse({ success: false, report });
     }
   }
 
   // 7. Generate Procedural / Gemini Case
   if (url.pathname === '/api/generate-case' && request.method === 'POST') {
-    try {
-      const body: any = await request.json().catch(() => ({}));
-      const requestedTopic = (body.topicText || body.customIdea || 'جنایت پیچیده').trim();
+    const requestedTopic = (requestBody?.topicText || requestBody?.customIdea || 'جنایت پیچیده').trim();
+    addWorkerLog('info', 'CaseGenerator', `درخواست ساخت پرونده با سوژه: "${requestedTopic}"`);
 
-      if (!apiKey) {
-        return jsonResponse(generateProceduralCase(requestedTopic));
-      }
+    if (!apiKey) {
+      addWorkerLog('warn', 'CaseGenerator', 'کلید API تنظیم نشده؛ استفاده از سناریونویس آفلاین.');
+      return jsonResponse(generateProceduralCase(requestedTopic));
+    }
 
-      const prompt = `شما داستان‌نویس و طراح ارشد پرونده‌های قضایی برای بازی «آقای قاضی» هستید.
+    const prompt = `شما داستان‌نویس و طراح ارشد پرونده‌های قضایی برای بازی «آقای قاضی» هستید.
 موضوع کلی پرونده که کاربر درخواست کرده است: "${requestedTopic}"
 
 قانون حیاتی و طلایی معمایی ۵۰/۵۰:
@@ -563,6 +670,7 @@ export async function onRequest(context: { request: Request; env: EventContextEn
   }
 }`;
 
+    try {
       const resAi = await generateWorkerRestAi(
         apiKey,
         prompt,
@@ -573,41 +681,44 @@ export async function onRequest(context: { request: Request; env: EventContextEn
         customBaseUrl
       );
       const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
+      addWorkerLog('success', 'CaseGenerator', `پرونده "${parsed.title}" با موفقیت توسط مدل [${resAi.usedModel}] تولید شد.`);
       return jsonResponse({
         ...parsed,
         allowsLiveConfession: Math.random() < 0.15,
         _activeModel: resAi.usedModel,
+        _latencyMs: resAi.latencyMs,
       });
-    } catch {
-      const body: any = await request.json().catch(() => ({}));
-      return jsonResponse(generateProceduralCase(body.topicText || 'جنایت'));
+    } catch (err: any) {
+      addWorkerLog('error', 'CaseGenerator', `خطا در تولید پرونده با جمینای: ${err?.message || err}. استفاده از سناریوی پشتیبان.`);
+      return jsonResponse(generateProceduralCase(requestedTopic));
     }
   }
 
   // 8. Generate Real-World Historical Case
   if (url.pathname === '/api/generate-real-case' && request.method === 'POST') {
-    try {
-      const body: any = await request.json().catch(() => ({}));
-      const { caseNameOrTopic, category, isRandom } = body;
-      let queryDesc = (caseNameOrTopic || '').trim();
+    const { caseNameOrTopic, category, isRandom } = requestBody || {};
+    let queryDesc = (caseNameOrTopic || '').trim();
 
-      if (isRandom || !queryDesc) {
-        const randomCuratedThemes = [
-          'یک پرونده واقعی و فوق‌العاده دراماتیک قتل مرموز یا جنایی در تاریخ جهان',
-          'یکی از جنجالی‌ترین پرونده‌های جنایی یا قتل‌های دادگاه‌های تاریخ ایران',
-          'بزرگ‌ترین و عجیب‌ترین پرونده سرقت موزه، سرقت بانک یا کلاهبرداری مالی در تاریخ',
-          'پرونده واقعی ترور یا مسمومیت مشکوک با مواد سمی ناشناخته در تاریخ',
-        ];
-        queryDesc = randomCuratedThemes[Math.floor(Math.random() * randomCuratedThemes.length)];
-      } else if (category) {
-        queryDesc = `پرونده واقعی در موضوع: ${category} - ${queryDesc}`;
-      }
+    if (isRandom || !queryDesc) {
+      const randomCuratedThemes = [
+        'یک پرونده واقعی و فوق‌العاده دراماتیک قتل مرموز یا جنایی در تاریخ جهان',
+        'یکی از جنجالی‌ترین پرونده‌های جنایی یا قتل‌های دادگاه‌های تاریخ ایران',
+        'بزرگ‌ترین و عجیب‌ترین پرونده سرقت موزه، سرقت بانک یا کلاهبرداری مالی در تاریخ',
+        'پرونده واقعی ترور یا مسمومیت مشکوک با مواد سمی ناشناخته در تاریخ',
+      ];
+      queryDesc = randomCuratedThemes[Math.floor(Math.random() * randomCuratedThemes.length)];
+    } else if (category) {
+      queryDesc = `پرونده واقعی در موضوع: ${category} - ${queryDesc}`;
+    }
 
-      if (!apiKey) {
-        return jsonResponse(generateProceduralCase(queryDesc));
-      }
+    addWorkerLog('info', 'RealCaseGenerator', `درخواست بازسازی پرونده تاریخی: "${queryDesc}"`);
 
-      const prompt = `شما مورخ ارشد جنایی و طراح پرونده‌های واقعی برای بازی دادگاه «آقای قاضی» هستید.
+    if (!apiKey) {
+      addWorkerLog('warn', 'RealCaseGenerator', 'کلید API موجود نیست؛ بازگشت سناریوی پشتیبان.');
+      return jsonResponse(generateProceduralCase(queryDesc));
+    }
+
+    const prompt = `شما مورخ ارشد جنایی و طراح پرونده‌های واقعی برای بازی دادگاه «آقای قاضی» هستید.
 درخواست کاربر / سوژه پرونده واقعی: "${queryDesc}"
 
 یک پرونده واقعی، مستند و تاریخی از تاریخ ایران یا جهان را با مشخصات واقعی بازسازی کنید.
@@ -679,6 +790,7 @@ export async function onRequest(context: { request: Request; env: EventContextEn
   }
 }`;
 
+    try {
       const resAi = await generateWorkerRestAi(
         apiKey,
         prompt,
@@ -689,35 +801,36 @@ export async function onRequest(context: { request: Request; env: EventContextEn
         customBaseUrl
       );
       const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
+      addWorkerLog('success', 'RealCaseGenerator', `پرونده واقعی "${parsed.title}" با موفقیت توسط مدل [${resAi.usedModel}] بازسازی شد.`);
       return jsonResponse({
         ...parsed,
         allowsLiveConfession: false,
         _activeModel: resAi.usedModel,
+        _latencyMs: resAi.latencyMs,
       });
-    } catch {
+    } catch (err: any) {
+      addWorkerLog('error', 'RealCaseGenerator', `خطا در بازسازی پرونده تاریخی: ${err?.message || err}`);
       return jsonResponse(generateProceduralCase('پرونده تاریخی'));
     }
   }
 
   // 9. Generate Heated Argument
   if (url.pathname === '/api/generate-argument' && request.method === 'POST') {
-    try {
-      const body: any = await request.json().catch(() => ({}));
-      const { caseData, lastExchange } = body;
-      const chars = caseData?.characters || [];
+    const { caseData, lastExchange } = requestBody || {};
+    const chars = caseData?.characters || [];
 
-      if (!apiKey || chars.length === 0) {
-        const c1 = chars[0] || { name: 'متهم اول' };
-        const c2 = chars[1] || { name: 'شاکی' };
-        return jsonResponse({
-          argument: [
-            { senderName: c1.name, text: 'جناب قاضی، این ادعاها کذب محض است!' },
-            { senderName: c2.name, text: 'دروغ نگو! اسناد همه چیز را اثبات می‌کند!' },
-          ],
-        });
-      }
+    if (!apiKey || chars.length === 0) {
+      const c1 = chars[0] || { name: 'متهم اول' };
+      const c2 = chars[1] || { name: 'شاکی' };
+      return jsonResponse({
+        argument: [
+          { senderName: c1.name, text: 'جناب قاضی، این ادعاها کذب محض است!' },
+          { senderName: c2.name, text: 'دروغ نگو! اسناد همه چیز را اثبات می‌کند!' },
+        ],
+      });
+    }
 
-      const prompt = `شما کارگردان تئاتر قضایی بازی «آقای قاضی» هستید.
+    const prompt = `شما کارگردان تئاتر قضایی بازی «آقای قاضی» هستید.
 یک مرافعه لفظی شدید و تند بین کاراکترهای دادگاه بنویسید:
 شخصیت‌ها: ${chars.map((c: Character) => `${c.name} (${c.roleTitle})`).join(', ')}
 موضوع: ${caseData.title}
@@ -729,6 +842,7 @@ export async function onRequest(context: { request: Request; env: EventContextEn
   { "senderName": "نام شخص دوم", "text": "پاسخ تند دوم..." }
 ]`;
 
+    try {
       const resAi = await generateWorkerRestAi(
         apiKey,
         prompt,
@@ -755,24 +869,24 @@ export async function onRequest(context: { request: Request; env: EventContextEn
 
   // 10. Interrogate Character
   if (url.pathname === '/api/interrogate' && request.method === 'POST') {
-    try {
-      const body: any = await request.json().catch(() => ({}));
-      const { caseData, question, history } = body;
-      const charsList = caseData?.characters || [];
+    const { caseData, question, history } = requestBody || {};
+    const charsList = caseData?.characters || [];
 
-      if (!apiKey || charsList.length === 0) {
-        const char = charsList[0] || { id: 'char-1', name: 'متهم' };
-        return jsonResponse({
-          addressedCharacterId: char.id,
-          addressedCharacterName: char.name,
-          speech: 'جناب قاضی، بنده توضیحات را با صداقت عرض کردم.',
-          innerThought: undefined,
-          isConfession: false,
-          interruption: null,
-        });
-      }
+    addWorkerLog('info', 'Interrogate', `استنطاق از صحن دادگاه با سوال قاضی: "${(question || '').substring(0, 50)}..."`);
 
-      const prompt = `شما بازیگران و هماهنگ‌کننده دادگاه «آقای قاضی» هستید.
+    if (!apiKey || charsList.length === 0) {
+      const char = charsList[0] || { id: 'char-1', name: 'متهم' };
+      return jsonResponse({
+        addressedCharacterId: char.id,
+        addressedCharacterName: char.name,
+        speech: 'جناب قاضی، بنده توضیحات را با صداقت عرض کردم.',
+        innerThought: undefined,
+        isConfession: false,
+        interruption: null,
+      });
+    }
+
+    const prompt = `شما بازیگران و هماهنگ‌کننده دادگاه «آقای قاضی» هستید.
 شخصیت‌های دادگاه:
 ${charsList.map((c: Character) => `${c.id}: ${c.name} (${c.roleTitle}) - ${c.occupation}`).join('\n')}
 
@@ -798,6 +912,7 @@ ${charsList.map((c: Character) => `${c.id}: ${c.name} (${c.roleTitle}) - ${c.occ
   "interruption": null
 }`;
 
+    try {
       const resAi = await generateWorkerRestAi(
         apiKey,
         prompt,
@@ -808,11 +923,14 @@ ${charsList.map((c: Character) => `${c.id}: ${c.name} (${c.roleTitle}) - ${c.occ
         customBaseUrl
       );
       const parsed = parseJsonFromAi<any>(resAi.text);
+      addWorkerLog('success', 'Interrogate', `پاسخ از کاراکتر [${parsed.addressedCharacterName}] با مدل [${resAi.usedModel}] دریافت شد.`);
       return jsonResponse({
         ...parsed,
         _activeModel: resAi.usedModel,
+        _latencyMs: resAi.latencyMs,
       });
-    } catch {
+    } catch (err: any) {
+      addWorkerLog('error', 'Interrogate', `خطا در استنطاق با هوش مصنوعی: ${err?.message || err}`);
       return jsonResponse({
         addressedCharacterId: 'char-1',
         addressedCharacterName: 'شخص حاضر در دادگاه',
@@ -825,52 +943,50 @@ ${charsList.map((c: Character) => `${c.id}: ${c.name} (${c.roleTitle}) - ${c.occ
 
   // 11. Judge Verdict Evaluation
   if (url.pathname === '/api/judge-verdict' && request.method === 'POST') {
-    try {
-      const body: any = await request.json().catch(() => ({}));
-      const { caseData, accusedId, verdictType, verdictReasoning, penalty, chargeName, individualDecisions } = body;
-      const realCulpritId = caseData?.hiddenTruth?.realCulpritId;
+    const { caseData, accusedId, verdictType, verdictReasoning, penalty, chargeName, individualDecisions } = requestBody || {};
+    const realCulpritId = caseData?.hiddenTruth?.realCulpritId;
 
-      const individualDecisionsList = Array.isArray(individualDecisions) && individualDecisions.length > 0
-        ? individualDecisions
-        : (caseData?.characters || []).map((c: Character) => ({
-            characterId: c.id,
-            characterName: c.name,
-            status: c.id === accusedId ? verdictType : 'acquitted',
-            chargeAndPenalty: c.id === accusedId ? `${chargeName || ''} - ${penalty || ''}` : 'تبرئه',
-          }));
+    const individualDecisionsList = Array.isArray(individualDecisions) && individualDecisions.length > 0
+      ? individualDecisions
+      : (caseData?.characters || []).map((c: Character) => ({
+          characterId: c.id,
+          characterName: c.name,
+          status: c.id === accusedId ? verdictType : 'acquitted',
+          chargeAndPenalty: c.id === accusedId ? `${chargeName || ''} - ${penalty || ''}` : 'تبرئه',
+        }));
 
-      const realCulpritFound = individualDecisionsList.some(
-        (d: any) => d.characterId === realCulpritId && d.status === 'guilty'
-      ) || (accusedId === realCulpritId && verdictType === 'guilty');
+    const realCulpritFound = individualDecisionsList.some(
+      (d: any) => d.characterId === realCulpritId && d.status === 'guilty'
+    ) || (accusedId === realCulpritId && verdictType === 'guilty');
 
-      if (!apiKey) {
-        const individualEvaluations = (caseData?.characters || []).map((c: Character) => {
-          const userDec = individualDecisionsList.find((d: any) => d.characterId === c.id);
-          const isCulprit = c.id === realCulpritId;
-          const markedGuilty = userDec?.status === 'guilty';
-          const isRight = (isCulprit && markedGuilty) || (!isCulprit && !markedGuilty);
-          return {
-            characterName: c.name,
-            statusSummary: markedGuilty ? 'محکوم به مجازات' : 'تبرئه / مختومه',
-            isCorrectVerdict: isRight,
-            note: isRight ? 'احراز صحیح وضعیت قضایی' : 'مغایرت با حقیقت مادی',
-          };
-        });
+    if (!apiKey) {
+      const individualEvaluations = (caseData?.characters || []).map((c: Character) => {
+        const userDec = individualDecisionsList.find((d: any) => d.characterId === c.id);
+        const isCulprit = c.id === realCulpritId;
+        const markedGuilty = userDec?.status === 'guilty';
+        const isRight = (isCulprit && markedGuilty) || (!isCulprit && !markedGuilty);
+        return {
+          characterName: c.name,
+          statusSummary: markedGuilty ? 'محکوم به مجازات' : 'تبرئه / مختومه',
+          isCorrectVerdict: isRight,
+          note: isRight ? 'احراز صحیح وضعیت قضایی' : 'مغایرت با حقیقت مادی',
+        };
+      });
 
-        return jsonResponse({
-          isCorrect: realCulpritFound,
-          justiceRating: realCulpritFound ? 95 : 35,
-          truthRevealed: caseData?.hiddenTruth?.howCrimeHappened || 'حقیقت بررسی شد.',
-          feedback: realCulpritFound ? 'عدالت به درستی محقق شد.' : 'متاسفانه مقصر واقعی شناسایی نشد.',
-          deceptionBusted: realCulpritFound,
-          epilogue: 'پرونده به اجرای احکام ارسال شد.',
-          chargeName: chargeName || 'احراز مجرمیت',
-          penaltyApplied: penalty || 'مجازات تعیینی',
-          individualEvaluations,
-        });
-      }
+      return jsonResponse({
+        isCorrect: realCulpritFound,
+        justiceRating: realCulpritFound ? 95 : 35,
+        truthRevealed: caseData?.hiddenTruth?.howCrimeHappened || 'حقیقت بررسی شد.',
+        feedback: realCulpritFound ? 'عدالت به درستی محقق شد.' : 'متاسفانه مقصر واقعی شناسایی نشد.',
+        deceptionBusted: realCulpritFound,
+        epilogue: 'پرونده به اجرای احکام ارسال شد.',
+        chargeName: chargeName || 'احراز مجرمیت',
+        penaltyApplied: penalty || 'مجازات تعیینی',
+        individualEvaluations,
+      });
+    }
 
-      const prompt = `شما هیئت نظارت قضایی بازی «آقای قاضی» هستید.
+    const prompt = `شما هیئت نظارت قضایی بازی «آقای قاضی» هستید.
 پرونده: ${caseData.title}
 مقصر واقعی: ${caseData.hiddenTruth?.realCulpritName} (آیدی: ${realCulpritId})
 حقیقت: ${caseData.hiddenTruth?.howCrimeHappened}
@@ -902,6 +1018,7 @@ ${individualDecisionsList.map((d: any) => `• ${d.characterName}: [${d.status}]
   ]
 }`;
 
+    try {
       const resAi = await generateWorkerRestAi(
         apiKey,
         prompt,
@@ -915,6 +1032,7 @@ ${individualDecisionsList.map((d: any) => `• ${d.characterName}: [${d.status}]
       return jsonResponse({
         ...parsed,
         _activeModel: resAi.usedModel,
+        _latencyMs: resAi.latencyMs,
       });
     } catch {
       return jsonResponse({

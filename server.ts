@@ -14,31 +14,25 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Multi-model pools for balanced workload distribution & zero-stall 503 recovery
-const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 export const ALL_AVAILABLE_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-3.1-pro-preview',
   'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
 ];
 export const MODEL_TIER_MAIN = [
   PRIMARY_MODEL,
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-3.1-pro-preview',
   'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
 ];
 export const MODEL_TIER_FAST_LITE = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
   'gemini-3.1-flash-lite',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-pro-preview',
 ];
 
 // ============================================================================
