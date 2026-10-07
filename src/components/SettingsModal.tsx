@@ -81,12 +81,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       status: 'idle',
     },
     {
-      modelName: 'gemini-3.1-pro-preview',
-      displayName: 'جمینای ۳.۱ پرو (Gemini 3.1 Pro)',
-      description: 'مدل تفکر عمیق پرو (نیازمند اتصال کارت اعتباری/Billing در کنسول گوگل؛ در پلن رایگان سهمیه آن ۰ است)',
-      status: 'idle',
-    },
-    {
       modelName: 'gemini-3.1-flash-lite',
       displayName: 'جمینای ۳.۱ لایت (Gemini 3.1 Flash-Lite)',
       description: 'نسخه فوق‌سریع با مصرف توکن بسیار کم برای جدال‌های لفظی و ارزیابی رأی',
