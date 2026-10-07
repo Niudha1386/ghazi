@@ -25,6 +25,7 @@ export interface EventContextEnv {
 
 // Active modern Gemini models supported on Google v1beta API
 const PRIMARY_MODEL = 'gemini-3.8-flash';
+const DEFAULT_WORKER_API_KEY: string = '';
 const MODEL_TIER_MAIN = [
   'gemini-3.8-flash',
   'gemini-3.1-pro-preview',
@@ -130,6 +131,15 @@ function extractApiKeyWithSource(request: Request, env?: EventContextEnv, reques
     if (env.GEMINI && env.GEMINI.trim()) return { key: env.GEMINI.trim(), source: 'env.GEMINI' };
     if (env.AI_API_KEY && env.AI_API_KEY.trim()) return { key: env.AI_API_KEY.trim(), source: 'env.AI_API_KEY' };
     if (env.VITE_GEMINI_API_KEY && env.VITE_GEMINI_API_KEY.trim()) return { key: env.VITE_GEMINI_API_KEY.trim(), source: 'env.VITE_GEMINI_API_KEY' };
+
+    // Dynamic heuristic scan across any other custom variable set in Cloudflare dashboard
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v === 'string' && v.trim() && k !== 'PRIMARY_MODEL' && k !== 'ASSETS' && k !== 'GEMINI_BASE_URL' && k !== 'GOOGLE_GENAI_BASE_URL') {
+        if (/key|token|gemini|api/i.test(k) || v.startsWith('AIza') || v.startsWith('AQ.') || v.length >= 25) {
+          return { key: v.trim(), source: `env.${k}` };
+        }
+      }
+    }
   }
 
   if (typeof process !== 'undefined' && process?.env) {
@@ -141,6 +151,10 @@ function extractApiKeyWithSource(request: Request, env?: EventContextEnv, reques
       process.env.GOOGLE_GENAI_API_KEY ||
       process.env.VITE_GEMINI_API_KEY;
     if (pKey && pKey.trim()) return { key: pKey.trim(), source: 'process.env' };
+  }
+
+  if (DEFAULT_WORKER_API_KEY && DEFAULT_WORKER_API_KEY.trim()) {
+    return { key: DEFAULT_WORKER_API_KEY.trim(), source: 'worker_default_variable' };
   }
 
   return { key: '', source: 'none' };
