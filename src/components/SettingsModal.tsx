@@ -83,7 +83,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     {
       modelName: 'gemini-3.1-pro-preview',
       displayName: 'جمینای ۳.۱ پرو (Gemini 3.1 Pro)',
-      description: 'مدل پرچمدار تفکر عمیق اشتراک پرو با استدلال استنتاجی بی‌نقص برای حل معماها',
+      description: 'مدل تفکر عمیق پرو (نیازمند اتصال کارت اعتباری/Billing در کنسول گوگل؛ در پلن رایگان سهمیه آن ۰ است)',
       status: 'idle',
     },
     {

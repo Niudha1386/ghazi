@@ -24,9 +24,9 @@ export const ALL_AVAILABLE_MODELS = [
 export const MODEL_TIER_MAIN = [
   PRIMARY_MODEL,
   'gemini-3.8-flash',
-  'gemini-3.1-pro-preview',
   'gemini-3.1-flash-lite',
   'gemini-flash-latest',
+  'gemini-3.1-pro-preview',
 ];
 export const MODEL_TIER_FAST_LITE = [
   'gemini-3.1-flash-lite',
