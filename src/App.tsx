@@ -441,13 +441,45 @@ export default function App() {
 
   // When Case is confirmed and generated, go DIRECTLY to the courtroom!
   const handleCaseCreatedAndEnterCourt = (newCase: CaseDossier & { _activeModel?: string; _latencyMs?: number }) => {
+    // Validate that newCase has valid structure
+    let validCase = newCase;
+    if (!validCase || !validCase.title || !Array.isArray(validCase.characters) || validCase.characters.length === 0) {
+      console.warn('Invalid case data detected, reverting to first available preset case');
+      if (presetCases && presetCases.length > 0) {
+        validCase = presetCases[0];
+      } else {
+        return;
+      }
+    }
+
+    // Ensure all critical structures exist so React never crashes into a black screen
+    const sanitizedCase: CaseDossier = {
+      ...validCase,
+      characters: Array.isArray(validCase.characters) ? validCase.characters : [],
+      evidence: Array.isArray(validCase.evidence) ? validCase.evidence : [],
+      autopsyReport: validCase.autopsyReport || {
+        timeOfDeath: 'نامشخص',
+        causeOfDeath: 'در دست بررسی',
+        toxicology: 'منفی',
+        injuries: [],
+        coronerNotes: 'گزارش تکمیلی در پرونده است.',
+      },
+      hiddenTruth: validCase.hiddenTruth || {
+        realCulpritId: validCase.characters?.[0]?.id || 'char-1',
+        realCulpritName: validCase.characters?.[0]?.name || 'متهم ردیف اول',
+        motive: 'انگیزه در دست بررسی',
+        howCrimeHappened: 'شرح در پرونده قید شده است.',
+        keyContradiction: 'تناقض در مدارک',
+      },
+    };
+
     // Archive previous save if exists
     if (savedSession) {
       archiveCaseSession(savedSession);
     }
     clearActiveCaseSession();
 
-    setCaseData(newCase);
+    setCaseData(sanitizedCase);
     if (newCase._activeModel) {
       setLastActiveModel(newCase._activeModel);
     }

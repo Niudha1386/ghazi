@@ -14,31 +14,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Multi-model pools for balanced workload distribution & zero-stall 503 recovery
-const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const PRIMARY_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 export const ALL_AVAILABLE_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
   'gemini-3.1-flash-lite',
+  'gemini-3.1-pro-preview',
 ];
 export const MODEL_TIER_MAIN = [
   PRIMARY_MODEL,
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
   'gemini-3.1-flash-lite',
+  'gemini-3.1-pro-preview',
 ];
 export const MODEL_TIER_FAST_LITE = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
   'gemini-3.1-flash-lite',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
 ];
 
 // ============================================================================
@@ -974,6 +967,9 @@ async function startServer() {
       // Giving AI plenty of tokens (5500) so it never curtails characters or details
       const resAi = await generateAiContent(prompt, true, 0.85, 5500);
       const parsedCase = parseJsonFromAi<CaseDossier>(resAi.text);
+      if (!parsedCase || !Array.isArray(parsedCase.characters) || parsedCase.characters.length === 0) {
+        throw new Error('AI output missing characters');
+      }
       
       // Strictly enforce 15% probability for live courtroom confession
       const allowsLiveConfession = Math.random() < 0.15;

@@ -38,6 +38,16 @@ export const CaseDossierView: React.FC<CaseDossierViewProps> = ({
   const [showIndictmentSheet, setShowIndictmentSheet] = useState(false);
   const labels = getDynamicCaseLabels(caseData);
 
+  const characters = Array.isArray(caseData?.characters) ? caseData.characters : [];
+  const evidenceList = Array.isArray(caseData?.evidence) ? caseData.evidence : [];
+  const autopsyReport = caseData?.autopsyReport || {
+    timeOfDeath: 'نامشخص',
+    causeOfDeath: 'در دست بررسی',
+    toxicology: 'منفی',
+    injuries: [],
+    coronerNotes: 'گزارش تکمیلی در پرونده است.',
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-6 sm:space-y-8 animate-in fade-in duration-300">
       {/* Dossier Header Folder Banner */}
@@ -162,26 +172,26 @@ export const CaseDossierView: React.FC<CaseDossierViewProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-[#191c28] border border-stone-800">
                 <span className="text-stone-400 block mb-1 font-medium">{labels.timeLabel}</span>
-                <span className="text-stone-200 font-semibold">{caseData.autopsyReport.timeOfDeath}</span>
+                <span className="text-stone-200 font-semibold">{autopsyReport.timeOfDeath}</span>
               </div>
               <div className="p-3 rounded-xl bg-[#191c28] border border-stone-800">
                 <span className="text-stone-400 block mb-1 font-medium">{labels.causeOrMethodLabel}</span>
-                <span className="text-red-300 font-semibold">{caseData.autopsyReport.causeOfDeath}</span>
+                <span className="text-red-300 font-semibold">{autopsyReport.causeOfDeath}</span>
               </div>
             </div>
 
             <div className="p-3.5 rounded-xl bg-[#191c28] border border-stone-800 space-y-1">
               <span className="text-xs text-stone-400 font-medium block">{labels.analysisLabel}</span>
               <p className="text-xs text-amber-200/90 leading-relaxed">
-                {caseData.autopsyReport.toxicology}
+                {autopsyReport.toxicology}
               </p>
             </div>
 
-            {caseData.autopsyReport.injuries && caseData.autopsyReport.injuries.length > 0 && (
+            {autopsyReport.injuries && autopsyReport.injuries.length > 0 && (
               <div className="space-y-1.5">
                 <span className="text-xs text-stone-400 font-medium block">{labels.damagesOrInjuriesLabel}</span>
                 <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  {caseData.autopsyReport.injuries.map((inj, idx) => (
+                  {autopsyReport.injuries.map((inj, idx) => (
                     <li
                       key={idx}
                       className="p-2 rounded-lg bg-[#11131c] border border-stone-850 text-stone-300 flex items-center gap-2"
@@ -196,7 +206,7 @@ export const CaseDossierView: React.FC<CaseDossierViewProps> = ({
 
             <div className="p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-600/30 text-emerald-200 text-xs leading-relaxed">
               <span className="font-bold block mb-1">{labels.expertNoteLabel}</span>
-              {caseData.autopsyReport.coronerNotes}
+              {autopsyReport.coronerNotes}
             </div>
           </div>
         </div>
@@ -208,13 +218,13 @@ export const CaseDossierView: React.FC<CaseDossierViewProps> = ({
               <div className="flex items-center justify-between border-b border-stone-800 pb-3">
                 <div className="flex items-center gap-2 text-amber-400 font-bold text-base">
                   <Search className="w-5 h-5 text-amber-400" />
-                  <h3>{labels.evidenceSectionTitle} ({caseData.evidence.length})</h3>
+                  <h3>{labels.evidenceSectionTitle} ({evidenceList.length})</h3>
                 </div>
                 <span className="text-xs text-stone-400">بررسی جزئیات</span>
               </div>
 
               <div className="space-y-3 mt-4">
-                {caseData.evidence.map((item) => (
+                {evidenceList.map((item) => (
                   <div
                     key={item.id}
                     onClick={() => {
@@ -260,7 +270,7 @@ export const CaseDossierView: React.FC<CaseDossierViewProps> = ({
               <Users className="w-6 h-6 text-amber-400" />
             </div>
             <div>
-              <h3 className="text-lg md:text-xl font-extrabold text-amber-100">احضار و استنطاق اشخاص حاضر در پرونده ({caseData.characters.length} نفر)</h3>
+              <h3 className="text-lg md:text-xl font-extrabold text-amber-100">احضار و استنطاق اشخاص حاضر در پرونده ({characters.length} نفر)</h3>
               <p className="text-xs text-stone-400">کارآگاهان آگاهی اظهارات اولیه این اشخاص را ثبت کرده‌اند. یکی را برای بازجویی حضوری احضار کنید:</p>
             </div>
           </div>
@@ -271,7 +281,7 @@ export const CaseDossierView: React.FC<CaseDossierViewProps> = ({
 
         {/* Highly responsive layout grid that handles any number of character cards dynamically without breaking! */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {caseData.characters.map((char) => (
+          {characters.map((char) => (
             <div
               key={char.id}
               className="group rounded-2xl bg-[#161826] border border-stone-800/80 hover:border-amber-500/40 p-5 transition-all duration-300 flex flex-col justify-between space-y-4 shadow-xl hover:-translate-y-1"

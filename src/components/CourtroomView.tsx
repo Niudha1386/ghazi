@@ -57,7 +57,30 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
   const [showEvidenceSelector, setShowEvidenceSelector] = useState(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  const activeChar = caseData.characters.find((c) => c.id === activeCharacterId) || caseData.characters[0];
+  const characters = Array.isArray(caseData?.characters) ? caseData.characters : [];
+  const evidenceList = Array.isArray(caseData?.evidence) ? caseData.evidence : [];
+  const autopsyReport = caseData?.autopsyReport || {
+    timeOfDeath: 'نامشخص',
+    causeOfDeath: 'در دست بررسی کارشناسان',
+    toxicology: 'منفی',
+    injuries: [],
+    coronerNotes: 'گزارش تکمیلی ضمیمه پرونده است.',
+  };
+
+  const activeChar = characters.find((c) => c.id === activeCharacterId) || characters[0] || {
+    id: 'char-fallback-1',
+    name: 'متهم حاضر در دادگاه',
+    role: 'defendant' as const,
+    roleTitle: 'متهم پرونده',
+    age: 35,
+    occupation: 'در دست بررسی',
+    relationToVictim: 'مظنون',
+    personality: 'مضطرب و متناقض‌گو',
+    initialStatement: 'جناب قاضی، بنده منتظر تفهیم اتهام هستم.',
+    suspicionLevel: 50,
+    isLying: false,
+    temperament: 'normal' as const,
+  };
 
   // Auto-scroll chat to bottom strictly within the container, leaving the main window scroll untouched
   useEffect(() => {
@@ -188,7 +211,7 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
-            {caseData.characters.map((char) => {
+            {characters.map((char) => {
               const isSelected = char.id === activeChar.id;
 
               return (
@@ -439,7 +462,7 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
                   </div>
 
                   <div className="space-y-2 mt-4 max-h-[420px] overflow-y-auto custom-scrollbar pr-1">
-                    {caseData.evidence.map((ev) => (
+                    {evidenceList.map((ev) => (
                       <div
                         key={ev.id}
                         onClick={() => {
@@ -502,11 +525,11 @@ export const CourtroomView: React.FC<CourtroomViewProps> = ({
                     <h3 className="font-bold text-red-200 text-xs">گزارش پزشکی قانونی (مرجع علمی):</h3>
                   </div>
                   <div className="text-xs text-stone-400 space-y-1 bg-[#171925] p-3 rounded-xl border border-stone-850">
-                    <p><strong className="text-stone-300">علت فوت:</strong> {caseData.autopsyReport.causeOfDeath}</p>
-                    <p><strong className="text-stone-300">زمان مرگ:</strong> {caseData.autopsyReport.timeOfDeath}</p>
+                    <p><strong className="text-stone-300">علت فوت:</strong> {autopsyReport.causeOfDeath}</p>
+                    <p><strong className="text-stone-300">زمان مرگ:</strong> {autopsyReport.timeOfDeath}</p>
                   </div>
                   <p className="text-[10px] text-stone-400 italic">
-                    {caseData.autopsyReport.coronerNotes}
+                    {autopsyReport.coronerNotes}
                   </p>
                 </div>
               </>

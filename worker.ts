@@ -19,22 +19,17 @@ export interface Env {
   ASSETS?: { fetch: (request: Request) => Promise<Response> };
 }
 
-const PRIMARY_MODEL = 'gemini-2.5-flash';
+const PRIMARY_MODEL = 'gemini-3.8-flash';
 const MODEL_TIER_MAIN = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
   'gemini-3.1-flash-lite',
+  'gemini-3.1-pro-preview',
 ];
 const MODEL_TIER_FAST_LITE = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
   'gemini-3.1-flash-lite',
-  'gemini-1.5-flash',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
+  'gemini-flash-latest',
 ];
 
 const corsHeaders = {
@@ -270,6 +265,7 @@ async function generateWorkerRestAi(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
           'User-Agent': 'aistudio-build-judge-app-worker',
         },
         body: JSON.stringify(reqBody),
@@ -430,9 +426,10 @@ export default {
 
     // 7. Generate Procedural / Gemini Case
     if (url.pathname === '/api/generate-case' && request.method === 'POST') {
+      let requestedTopic = 'جنایت پیچیده';
       try {
         const body: any = await request.json().catch(() => ({}));
-        const requestedTopic = (body.topicText || body.customIdea || 'جنایت پیچیده').trim();
+        requestedTopic = (body.topicText || body.customIdea || 'جنایت پیچیده').trim();
 
         if (!apiKey) {
           return jsonResponse(generateProceduralCase(requestedTopic));
@@ -573,23 +570,27 @@ export default {
           customBaseUrl
         );
         const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
+        if (!parsed || !Array.isArray(parsed.characters) || parsed.characters.length === 0) {
+          throw new Error('AI output missing characters');
+        }
         return jsonResponse({
           ...parsed,
           allowsLiveConfession: Math.random() < 0.15,
           _activeModel: resAi.usedModel,
         });
-      } catch {
-        const body: any = await request.json().catch(() => ({}));
-        return jsonResponse(generateProceduralCase(body.topicText || 'جنایت'));
+      } catch (err: any) {
+        console.error('Worker AI generation fallback:', err);
+        return jsonResponse(generateProceduralCase(requestedTopic || 'جنایت'));
       }
     }
 
     // 8. Generate Real-World Historical Case
     if (url.pathname === '/api/generate-real-case' && request.method === 'POST') {
+      let queryDesc = 'پرونده واقعی و تاریخی';
       try {
         const body: any = await request.json().catch(() => ({}));
         const { caseNameOrTopic, category, isRandom } = body;
-        let queryDesc = (caseNameOrTopic || '').trim();
+        queryDesc = (caseNameOrTopic || '').trim();
 
         if (isRandom || !queryDesc) {
           const randomCuratedThemes = [
@@ -689,13 +690,17 @@ export default {
           customBaseUrl
         );
         const parsed = parseJsonFromAi<CaseDossier>(resAi.text);
+        if (!parsed || !Array.isArray(parsed.characters) || parsed.characters.length === 0) {
+          throw new Error('Real case missing characters');
+        }
         return jsonResponse({
           ...parsed,
           allowsLiveConfession: false,
           _activeModel: resAi.usedModel,
         });
-      } catch {
-        return jsonResponse(generateProceduralCase('پرونده تاریخی'));
+      } catch (err: any) {
+        console.error('Worker real case fallback:', err);
+        return jsonResponse(generateProceduralCase(queryDesc || 'پرونده تاریخی'));
       }
     }
 

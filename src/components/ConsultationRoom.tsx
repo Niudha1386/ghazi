@@ -63,12 +63,22 @@ export const ConsultationRoom: React.FC<ConsultationRoomProps> = ({
         }),
       });
 
-      const newCaseData: CaseDossier = await response.json();
+      if (!response.ok) {
+        throw new Error(`خطای سرور: ${response.status}`);
+      }
+
+      const newCaseData: any = await response.json();
+
+      // Guard against malformed or error payloads
+      if (!newCaseData || !newCaseData.title || !Array.isArray(newCaseData.characters) || newCaseData.characters.length === 0) {
+        throw new Error('ساختار اطلاعات پرونده ناقص است.');
+      }
+
       soundManager.playDramaticSting();
       onCaseGenerated(newCaseData);
     } catch (err) {
       console.error('Error generating case:', err);
-      if (presetCases.length > 0) {
+      if (presetCases && presetCases.length > 0) {
         onSelectPresetCase(presetCases[0]);
       }
     } finally {

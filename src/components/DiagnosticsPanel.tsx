@@ -135,7 +135,7 @@ export const DiagnosticsPanel: React.FC = () => {
                 ) : (
                   <span className="text-stone-500 font-mono">نامعلوم</span>
                 )}
-                <span className="text-stone-400 font-medium">پیکربندی کلید API در ریلوی:</span>
+                <span className="text-stone-400 font-medium">پیکربندی کلید API در سرور / ورکر:</span>
               </div>
 
               {/* API endpoint status */}
@@ -159,7 +159,7 @@ export const DiagnosticsPanel: React.FC = () => {
                 ) : (
                   <span className="text-stone-500 font-mono">تست نشده</span>
                 )}
-                <span className="text-stone-400 font-medium">ارتباط شبکه سرور ریلوی با دامنه گوگل:</span>
+                <span className="text-stone-400 font-medium">ارتباط شبکه سرور / ورکر با دامنه گوگل:</span>
               </div>
 
               {/* Live Gemini Ping */}

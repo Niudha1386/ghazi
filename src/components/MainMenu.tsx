@@ -93,6 +93,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       });
       if (!res.ok) throw new Error('خطا در ارتباط با سرور');
       const newRealCase: CaseDossier = await res.json();
+      if (!newRealCase || !newRealCase.title || !Array.isArray(newRealCase.characters) || newRealCase.characters.length === 0) {
+        throw new Error('ساختار پرونده واقعی ناقص است');
+      }
       setRealCasesList((prev) => [newRealCase, ...prev]);
       setShowRealCasesModal(false);
       onSelectCase(newRealCase);
